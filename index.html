@@ -1,0 +1,1162 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Дневник тренировок</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f4f4f2;
+  --surface: #fcfcfb;
+  --surface-2: #efefec;
+  --border: #dddcd7;
+  --text: #0b0b0b;
+  --text-2: #52514e;
+  --muted: #8a8984;
+  --accent: #2a78d6;
+  --accent-ink: #ffffff;
+  --accent-soft: #e3eefb;
+  --good: #1f7a3a;
+  --good-soft: #e2f3e6;
+  --warn: #9a6400;
+  --warn-soft: #fbf0d9;
+  --bad: #c03a39;
+  --bad-soft: #fbe5e5;
+  --skip: #7a7974;
+  --skip-soft: #ececea;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #121211;
+    --surface: #1a1a19;
+    --surface-2: #242423;
+    --border: #34342f;
+    --text: #ffffff;
+    --text-2: #c3c2b7;
+    --muted: #8f8e86;
+    --accent: #3987e5;
+    --accent-ink: #ffffff;
+    --accent-soft: #1d2d42;
+    --good: #5cc27a;
+    --good-soft: #1b3123;
+    --warn: #e0a83a;
+    --warn-soft: #3a2f17;
+    --bad: #e66767;
+    --bad-soft: #3d1f1f;
+    --skip: #a3a29a;
+    --skip-soft: #2a2a28;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121211; --surface: #1a1a19; --surface-2: #242423; --border: #34342f;
+  --text: #ffffff; --text-2: #c3c2b7; --muted: #8f8e86;
+  --accent: #3987e5; --accent-ink: #ffffff; --accent-soft: #1d2d42;
+  --good: #5cc27a; --good-soft: #1b3123; --warn: #e0a83a; --warn-soft: #3a2f17;
+  --bad: #e66767; --bad-soft: #3d1f1f; --skip: #a3a29a; --skip-soft: #2a2a28;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+header.top {
+  position: sticky; top: 0; z-index: 10;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.top-inner { max-width: 920px; margin: 0 auto; padding: 10px 16px 0; }
+.brand { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.brand h1 { font-size: 18px; margin: 0; }
+.brand .sub { color: var(--muted); font-size: 13px; }
+nav.tabs { display: flex; gap: 2px; overflow-x: auto; margin-top: 8px; scrollbar-width: none; }
+nav.tabs button {
+  border: 0; background: none; color: var(--text-2); font: inherit;
+  padding: 8px 12px; border-bottom: 2px solid transparent; cursor: pointer; white-space: nowrap;
+}
+nav.tabs button.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+main { max-width: 920px; margin: 0 auto; padding: 16px; }
+h2 { font-size: 20px; margin: 4px 0 12px; }
+h3 { font-size: 16px; margin: 0 0 8px; }
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px;
+}
+.card.soft { background: var(--surface-2); }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.grow { flex: 1; }
+.btn {
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  font: inherit; padding: 8px 14px; border-radius: 8px; cursor: pointer;
+}
+.btn:hover { border-color: var(--text-2); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.danger { color: var(--bad); }
+.btn.sm { padding: 4px 10px; font-size: 13px; }
+.btn.icon { padding: 4px 9px; }
+input, textarea, select {
+  font: inherit; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; width: 100%;
+}
+textarea { min-height: 70px; resize: vertical; }
+input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+label.f { display: block; font-size: 13px; color: var(--text-2); margin-bottom: 10px; }
+label.f > input, label.f > textarea, label.f > select { margin-top: 4px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 12px; }
+.badge {
+  display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  background: var(--surface-2); color: var(--text-2); white-space: nowrap;
+}
+.badge.good { background: var(--good-soft); color: var(--good); }
+.badge.warn { background: var(--warn-soft); color: var(--warn); }
+.badge.skip { background: var(--skip-soft); color: var(--skip); }
+.badge.accent { background: var(--accent-soft); color: var(--accent); }
+.ex-card { display: grid; grid-template-columns: 34px 1fr; gap: 10px; padding: 12px 0; border-top: 1px solid var(--border); }
+.ex-card:first-child { border-top: 0; }
+.ex-num {
+  width: 30px; height: 30px; border-radius: 50%; background: var(--accent-soft); color: var(--accent);
+  display: grid; place-items: center; font-weight: 700; font-size: 14px;
+}
+.ex-name { font-weight: 600; font-size: 16px; }
+.ex-scheme { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; margin: 2px 0; }
+.ex-scheme .unit { font-size: 14px; font-weight: 500; color: var(--text-2); }
+.set-dots { display: flex; gap: 4px; margin: 4px 0; }
+.set-dots span { width: 22px; height: 6px; border-radius: 3px; background: var(--accent); opacity: .85; }
+.callout { border-left: 3px solid var(--accent); padding: 8px 12px; background: var(--accent-soft); border-radius: 0 8px 8px 0; margin-bottom: 10px; }
+.callout.good { border-color: var(--good); background: var(--good-soft); }
+.callout h4 { margin: 0 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .4px; color: var(--text-2); }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; flex-wrap: wrap; }
+.seg button { border: 0; background: var(--surface); color: var(--text-2); font: inherit; padding: 8px 12px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button.on { background: var(--accent); color: var(--accent-ink); }
+.sets-table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+.sets-table th { font-size: 12px; font-weight: 500; color: var(--muted); text-align: left; padding: 2px 4px; }
+.sets-table td { padding: 3px 4px; }
+.sets-table td:first-child { width: 28px; color: var(--muted); font-size: 13px; }
+.sets-table input { padding: 5px 7px; }
+.sets-table td.chk { width: 32px; text-align: center; }
+.sets-table input[type=checkbox] { width: 18px; height: 18px; }
+.log-ex { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; background: var(--surface); }
+.scale { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+.scale button {
+  min-width: 36px; padding: 6px 8px; border: 1px solid var(--border); background: var(--surface);
+  border-radius: 6px; cursor: pointer; color: var(--text-2); font: inherit;
+}
+.scale button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.hist-item { display: flex; gap: 12px; align-items: flex-start; }
+.hist-date { min-width: 64px; text-align: center; }
+.hist-date .d { font-size: 22px; font-weight: 700; line-height: 1; }
+.hist-date .m { font-size: 12px; color: var(--muted); }
+details summary { cursor: pointer; color: var(--text-2); font-size: 13px; }
+pre.prompt {
+  white-space: pre-wrap; word-break: break-word; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px; max-height: 360px; overflow: auto; font-size: 12.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.toast {
+  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+  background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 8px;
+  font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 50; max-width: calc(100% - 32px);
+}
+.toast.show { opacity: 1; }
+.empty { text-align: center; padding: 30px 16px; }
+.empty p { color: var(--text-2); }
+/* attendance */
+.att { display: grid; grid-template-columns: 70px repeat(7, 1fr); gap: 4px; font-size: 12px; align-items: center; }
+.att .h { color: var(--muted); text-align: center; }
+.att .wk { color: var(--muted); }
+.att .c {
+  height: 30px; border-radius: 6px; background: var(--surface-2); display: grid; place-items: center;
+  font-weight: 700; font-size: 13px; color: transparent;
+}
+.att .c.done { background: var(--good-soft); color: var(--good); }
+.att .c.skipped { background: var(--skip-soft); color: var(--skip); }
+.att .c.sick { background: var(--warn-soft); color: var(--warn); }
+.att .c.today { outline: 2px solid var(--accent); outline-offset: -2px; }
+.att .c.future { opacity: .4; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--text-2); margin-top: 10px; }
+.legend i { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 4px; font-style: normal; font-weight: 700; font-size: 11px; margin-right: 5px; vertical-align: -3px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; }
+.stat .v { font-size: 24px; font-weight: 700; }
+.stat .l { font-size: 12px; color: var(--muted); }
+/* chart */
+.chart-wrap { position: relative; }
+.chart-wrap svg { width: 100%; height: auto; display: block; }
+.chart-wrap .grid line { stroke: var(--border); stroke-width: 1; }
+.chart-wrap .axis text { fill: var(--muted); font-size: 11px; }
+.chart-wrap .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart-wrap .pt { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
+.chart-wrap .cross { stroke: var(--text-2); stroke-width: 1; stroke-dasharray: 3 3; }
+.tip {
+  position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 10px; font-size: 12.5px; box-shadow: 0 4px 14px rgba(0,0,0,.12);
+  white-space: nowrap; display: none; z-index: 5;
+}
+table.data { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.data th, table.data td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--border); }
+table.data th { color: var(--muted); font-weight: 500; }
+@media (max-width: 560px) {
+  .ex-scheme { font-size: 19px; }
+  .hist-date { min-width: 48px; }
+  .att { grid-template-columns: 52px repeat(7, 1fr); }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-inner">
+    <div class="brand">
+      <h1>Дневник тренировок</h1>
+      <span class="sub" id="brandSub"></span>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button data-tab="today">Сегодня</button>
+      <button data-tab="log">Записать</button>
+      <button data-tab="history">История</button>
+      <button data-tab="progress">Прогресс</button>
+      <button data-tab="claude">Claude ⇄</button>
+      <button data-tab="settings">Профиль и данные</button>
+    </nav>
+  </div>
+</header>
+<main id="app"></main>
+<div class="toast" id="toast"></div>
+<input type="file" id="fileInput" accept=".json,application/json" hidden>
+
+<script>
+'use strict';
+/* =====================================================================
+   Хранилище: localStorage (ключ STORE_KEY) + ручной бэкап в JSON-файл.
+   ===================================================================== */
+const STORE_KEY = 'workoutApp.v1';
+const DRAFT_KEY = 'workoutApp.draft.v1';
+const UI_KEY = 'workoutApp.ui.v1';
+
+const DEFAULT_PROFILE = {
+  name: '',
+  goal: 'Набор силы и мышечной массы, общая физическая форма',
+  level: 'Начальный/средний (до 1 года регулярных тренировок)',
+  daysPerWeek: 3,
+  sessionMinutes: 60,
+  equipment: 'Тренажёрный зал: штанга, гантели, турник, блочные тренажёры',
+  limitations: '',
+  notes: ''
+};
+
+function emptyState() {
+  return { version: 1, profile: { ...DEFAULT_PROFILE }, plans: [], history: [] };
+}
+
+function safeGet(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+function safeSet(key, val) {
+  try { localStorage.setItem(key, val); return true; }
+  catch (e) { toast('Не удалось сохранить в localStorage — сделайте бэкап в файл'); return false; }
+}
+function safeDel(key) { try { localStorage.removeItem(key); } catch (e) {} }
+
+function loadState() {
+  const raw = safeGet(STORE_KEY);
+  if (!raw) return emptyState();
+  try {
+    const s = JSON.parse(raw);
+    return { ...emptyState(), ...s, profile: { ...DEFAULT_PROFILE, ...(s.profile || {}) } };
+  } catch (e) { return emptyState(); }
+}
+
+let state = loadState();
+function save() { safeSet(STORE_KEY, JSON.stringify(state)); }
+
+let ui = { tab: 'today', promptCount: 6, progressEx: '' };
+try { Object.assign(ui, JSON.parse(safeGet(UI_KEY) || '{}')); } catch (e) {}
+function saveUi() { safeSet(UI_KEY, JSON.stringify(ui)); }
+
+let draft = null;
+try { draft = JSON.parse(safeGet(DRAFT_KEY) || 'null'); } catch (e) { draft = null; }
+function saveDraft() { draft ? safeSet(DRAFT_KEY, JSON.stringify(draft)) : safeDel(DRAFT_KEY); }
+
+/* =====================================================================
+   Утилиты
+   ===================================================================== */
+const $ = (sel, root = document) => root.querySelector(sel);
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const pad = (n) => String(n).padStart(2, '0');
+const isoDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const todayIso = () => isoDate(new Date());
+const parseIso = (s) => { const [y, m, d] = String(s).split('-').map(Number); return new Date(y, (m || 1) - 1, d || 1); };
+const addDays = (iso, n) => { const d = parseIso(iso); d.setDate(d.getDate() + n); return isoDate(d); };
+const MONTHS = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+const WEEKDAYS = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+const fmtDate = (iso) => { const d = parseIso(iso); return `${d.getDate()} ${MONTHS[d.getMonth()]}, ${WEEKDAYS[d.getDay()]}`; };
+const daysBetween = (a, b) => Math.round((parseIso(b) - parseIso(a)) / 86400000);
+const num = (v) => { const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : null; };
+const fmtW = (w) => (w === null || w === undefined || w === '' || Number(w) === 0) ? 'собств. вес' : `${+Number(w).toFixed(2)} кг`;
+const unitLabel = (u) => u === 'sec' ? 'сек' : 'повт.';
+
+const STATUS = {
+  done: { label: 'Выполнена', cls: 'good', glyph: '✓' },
+  skipped: { label: 'Пропущена', cls: 'skip', glyph: '–' },
+  sick: { label: 'Болезнь / плохое самочувствие', cls: 'warn', glyph: '+' }
+};
+
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 2600);
+}
+const currentPlan = () => state.plans[state.plans.length - 1] || null;
+const sortedHistory = () => [...state.history].sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch (e) {
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+    let ok = false; try { ok = document.execCommand('copy'); } catch (_) {}
+    ta.remove(); return ok;
+  }
+}
+function download(filename, text, type = 'text/plain') {
+  const blob = new Blob([text], { type: type + ';charset=utf-8' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename;
+  document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+}
+
+/* =====================================================================
+   Навигация
+   ===================================================================== */
+function setTab(tab) { ui.tab = tab; saveUi(); render(); window.scrollTo(0, 0); }
+$('#tabs').addEventListener('click', (e) => { const b = e.target.closest('button[data-tab]'); if (b) setTab(b.dataset.tab); });
+
+function render() {
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === ui.tab));
+  const done = state.history.filter(h => h.status === 'done').length;
+  $('#brandSub').textContent = state.profile.name
+    ? `${state.profile.name} · ${done} трен. выполнено` : `${done} трен. выполнено`;
+  const views = { today: viewToday, log: viewLog, history: viewHistory, progress: viewProgress, claude: viewClaude, settings: viewSettings };
+  $('#app').innerHTML = (views[ui.tab] || viewToday)();
+  if (ui.tab === 'progress') mountChart();
+}
+
+/* =====================================================================
+   Вкладка «Сегодня»
+   ===================================================================== */
+function schemeHtml(ex) {
+  const sets = ex.sets || 1;
+  return `<div class="ex-scheme">${esc(sets)} × ${esc(ex.reps ?? '—')} <span class="unit">${unitLabel(ex.unit)}</span>
+    <span class="unit">·</span> ${esc(fmtW(ex.weight))}</div>`;
+}
+function changeBadge(change) {
+  if (!change) return '';
+  const c = String(change).toLowerCase();
+  let cls = 'accent';
+  if (/^\+|нов|добав|увелич/.test(c)) cls = 'good';
+  else if (/^[−-]|сниж|меньш|умень|облегч|разгруз/.test(c)) cls = 'warn';
+  else if (/без изм/.test(c)) cls = '';
+  return `<span class="badge ${cls}">${esc(change)}</span>`;
+}
+
+function viewToday() {
+  const plan = currentPlan();
+  const last = sortedHistory()[0];
+  if (!plan && !state.history.length) {
+    return `<div class="card empty">
+      <h2>Добро пожаловать 👋</h2>
+      <p>Здесь будет план тренировки на сегодня. Пока данных нет.</p>
+      <div class="row" style="justify-content:center">
+        <button class="btn primary" data-act="load-demo">Загрузить демо-данные</button>
+        <button class="btn" data-act="goto" data-tab="settings">Заполнить профиль</button>
+        <button class="btn" data-act="goto" data-tab="claude">Вставить план от Claude</button>
+      </div>
+      <p class="small muted" style="margin-top:16px">Демо — 4 недели воображаемых тренировок (с пропуском и болезнью) и план на следующую.<br>Их можно удалить в «Профиль и данные».</p>
+    </div>`;
+  }
+  let html = '';
+  if (last) {
+    const gap = daysBetween(last.date, todayIso());
+    html += `<div class="row small muted" style="margin-bottom:10px">
+      Последняя запись: ${fmtDate(last.date)} — <span class="badge ${STATUS[last.status].cls}">${STATUS[last.status].label}</span>
+      ${gap > 0 ? `· ${gap} дн. назад` : '· сегодня'}</div>`;
+  }
+  if (!plan) {
+    html += `<div class="card empty"><h3>Плана на следующую тренировку нет</h3>
+      <p>Сформируйте prompt, отправьте его в Claude и вставьте ответ.</p>
+      <button class="btn primary" data-act="goto" data-tab="claude">Перейти к Claude ⇄</button></div>`;
+    return html;
+  }
+  const used = state.history.some(h => h.planId === plan.id);
+  html += `<h2>${esc(plan.title || 'Тренировка')}</h2>
+    <div class="row small" style="margin:-6px 0 12px">
+      ${plan.date ? `<span class="badge accent">📅 ${fmtDate(plan.date)}</span>` : ''}
+      ${plan.focus ? `<span class="badge">${esc(plan.focus)}</span>` : ''}
+      ${plan.duration_min ? `<span class="badge">⏱ ~${esc(plan.duration_min)} мин</span>` : ''}
+      ${used ? '<span class="badge good">✓ уже записана</span>' : ''}
+    </div>`;
+  if (plan.summary || plan.recommendation) {
+    html += `<div class="card">
+      ${plan.summary ? `<div class="callout good"><h4>Итог прошлой тренировки</h4>${esc(plan.summary)}</div>` : ''}
+      ${plan.recommendation ? `<div class="callout"><h4>Рекомендация</h4>${esc(plan.recommendation)}</div>` : ''}
+    </div>`;
+  }
+  if (plan.warmup) html += `<div class="card soft"><h3>🔥 Разминка</h3><div>${esc(plan.warmup)}</div></div>`;
+  html += `<div class="card"><h3>Упражнения</h3>`;
+  (plan.exercises || []).forEach((ex, i) => {
+    html += `<div class="ex-card">
+      <div class="ex-num">${i + 1}</div>
+      <div>
+        <div class="row"><span class="ex-name grow">${esc(ex.name)}</span>${changeBadge(ex.change)}</div>
+        ${schemeHtml(ex)}
+        <div class="set-dots">${'<span></span>'.repeat(Math.min(Number(ex.sets) || 1, 10))}</div>
+        <div class="small muted">${ex.rest_sec ? `Отдых ${esc(ex.rest_sec)} сек` : ''}${ex.rest_sec && ex.rpe ? ' · ' : ''}${ex.rpe ? `Целевое RPE ${esc(ex.rpe)}` : ''}</div>
+        ${ex.notes ? `<div class="small" style="margin-top:4px">${esc(ex.notes)}</div>` : ''}
+      </div>
+    </div>`;
+  });
+  html += `</div>`;
+  if (plan.cooldown) html += `<div class="card soft"><h3>🧘 Заминка</h3><div>${esc(plan.cooldown)}</div></div>`;
+  if (plan.notes) html += `<div class="card soft"><h3>📝 Заметки тренера</h3><div>${esc(plan.notes)}</div></div>`;
+  html += `<div class="row" style="margin-top:6px">
+    <button class="btn primary" data-act="start-log">Записать результат</button>
+    <button class="btn" data-act="quick-status" data-status="skipped">Отметить пропуск</button>
+    <button class="btn" data-act="quick-status" data-status="sick">Болею / плохо себя чувствую</button>
+  </div>`;
+  return html;
+}
+
+/* =====================================================================
+   Вкладка «Записать»
+   ===================================================================== */
+function newDraftFromPlan(status = 'done') {
+  const plan = currentPlan();
+  return {
+    id: null,
+    date: todayIso(),
+    status,
+    planId: plan ? plan.id : null,
+    title: plan ? plan.title : 'Тренировка',
+    exercises: plan ? (plan.exercises || []).map(ex => ({
+      name: ex.name, unit: ex.unit || 'reps',
+      planned: { sets: ex.sets, reps: ex.reps, weight: ex.weight },
+      sets: Array.from({ length: Math.max(1, Number(ex.sets) || 1) }, () => ({
+        reps: firstNum(ex.reps), weight: num(ex.weight) ?? 0, done: true
+      })),
+      notes: ''
+    })) : [],
+    wellbeing: null, effort: null, duration: plan && plan.duration_min ? plan.duration_min : '',
+    sleep: '', notes: '', reason: ''
+  };
+}
+function firstNum(v) { const m = String(v ?? '').match(/\d+([.,]\d+)?/); return m ? num(m[0]) : null; }
+
+function ensureDraft() { if (!draft) { draft = newDraftFromPlan(); saveDraft(); } }
+
+function viewLog() {
+  ensureDraft();
+  const d = draft;
+  const editing = !!d.id;
+  let html = `<h2>${editing ? 'Редактирование записи' : 'Записать тренировку'}</h2>
+  <div class="card">
+    <div class="grid2">
+      <label class="f">Дата<input type="date" data-f="date" value="${esc(d.date)}"></label>
+      <label class="f">Название<input data-f="title" value="${esc(d.title)}"></label>
+    </div>
+    <div class="small muted" style="margin-bottom:6px">Статус</div>
+    <div class="seg" style="margin-bottom:6px">
+      ${Object.entries(STATUS).map(([k, s]) => `<button data-act="set-status" data-status="${k}" class="${d.status === k ? 'on' : ''}">${s.glyph} ${s.label}</button>`).join('')}
+    </div>
+  </div>`;
+
+  if (d.status !== 'done') {
+    html += `<div class="card">
+      <label class="f">${d.status === 'sick' ? 'Что случилось (симптомы, диагноз, сколько дней)' : 'Причина пропуска'}
+        <textarea data-f="reason" placeholder="${d.status === 'sick' ? 'Например: простуда, температура 37.8, слабость' : 'Например: командировка, не успел после работы'}">${esc(d.reason)}</textarea></label>
+      ${d.status === 'sick' ? `<div class="small muted">Самочувствие сейчас</div>${scaleHtml('wellbeing', 1, 5, d.wellbeing)}` : ''}
+      <label class="f" style="margin-top:10px">Комментарий<textarea data-f="notes">${esc(d.notes)}</textarea></label>
+      ${d.status === 'sick' ? `<div class="small muted">Если частично потренировались — переключитесь на «Выполнена» и опишите самочувствие в комментарии.</div>` : ''}
+    </div>`;
+  } else {
+    html += `<div class="card"><div class="row" style="margin-bottom:8px"><h3 class="grow" style="margin:0">Упражнения</h3>
+      <button class="btn sm" data-act="add-ex">+ упражнение</button></div>`;
+    if (!d.exercises.length) html += `<p class="muted small">Добавьте выполненные упражнения.</p>`;
+    d.exercises.forEach((ex, i) => {
+      const p = ex.planned;
+      html += `<div class="log-ex">
+        <div class="row">
+          <input class="grow" style="flex:1;min-width:160px" data-ex="${i}" data-k="name" value="${esc(ex.name)}" placeholder="Название упражнения">
+          <select data-ex="${i}" data-k="unit" style="width:auto">
+            <option value="reps" ${ex.unit !== 'sec' ? 'selected' : ''}>повторы</option>
+            <option value="sec" ${ex.unit === 'sec' ? 'selected' : ''}>секунды</option>
+          </select>
+          <button class="btn icon danger" title="Удалить упражнение" data-act="del-ex" data-ex="${i}">✕</button>
+        </div>
+        ${p ? `<div class="small muted" style="margin-top:4px">План: ${esc(p.sets)} × ${esc(p.reps)} · ${esc(fmtW(p.weight))}</div>` : ''}
+        <table class="sets-table"><thead><tr><th>#</th><th>${ex.unit === 'sec' ? 'Секунды' : 'Повторы'}</th><th>Вес, кг</th><th title="Подход выполнен">✓</th><th></th></tr></thead><tbody>
+        ${ex.sets.map((s, j) => `<tr>
+          <td>${j + 1}</td>
+          <td><input type="number" inputmode="numeric" min="0" data-ex="${i}" data-set="${j}" data-k="reps" value="${esc(s.reps ?? '')}"></td>
+          <td><input type="number" inputmode="decimal" min="0" step="0.5" data-ex="${i}" data-set="${j}" data-k="weight" value="${esc(s.weight ?? '')}"></td>
+          <td class="chk"><input type="checkbox" data-ex="${i}" data-set="${j}" data-k="done" ${s.done !== false ? 'checked' : ''}></td>
+          <td style="width:34px"><button class="btn icon sm" title="Удалить подход" data-act="del-set" data-ex="${i}" data-set="${j}">−</button></td>
+        </tr>`).join('')}
+        </tbody></table>
+        <div class="row" style="margin-top:6px">
+          <button class="btn sm" data-act="add-set" data-ex="${i}">+ подход</button>
+          <input class="grow" style="flex:1;min-width:160px" data-ex="${i}" data-k="notes" value="${esc(ex.notes)}" placeholder="Заметка: техника, боль, было легко/тяжело…">
+        </div>
+      </div>`;
+    });
+    html += `</div>
+    <div class="card">
+      <h3>Ощущения</h3>
+      <div class="small muted">Самочувствие (1 — ужасно, 5 — отлично)</div>${scaleHtml('wellbeing', 1, 5, d.wellbeing)}
+      <div class="small muted" style="margin-top:10px">Тяжесть тренировки, RPE (1 — очень легко, 10 — предел)</div>${scaleHtml('effort', 1, 10, d.effort)}
+      <div class="grid2" style="margin-top:10px">
+        <label class="f">Длительность, мин<input type="number" min="0" data-f="duration" value="${esc(d.duration)}"></label>
+        <label class="f">Сон прошлой ночью, ч<input type="number" min="0" step="0.5" data-f="sleep" value="${esc(d.sleep)}"></label>
+      </div>
+      <label class="f">Комментарий: что было тяжело/легко, боли, настроение, питание<textarea data-f="notes">${esc(d.notes)}</textarea></label>
+    </div>`;
+  }
+  html += `<div class="row">
+    <button class="btn primary" data-act="save-log">${editing ? 'Сохранить изменения' : 'Сохранить тренировку'}</button>
+    <button class="btn" data-act="reset-draft">${editing ? 'Отменить' : 'Сбросить черновик'}</button>
+    <span class="small muted">Черновик сохраняется автоматически</span>
+  </div>`;
+  return html;
+}
+function scaleHtml(field, from, to, val) {
+  let s = `<div class="scale">`;
+  for (let i = from; i <= to; i++) s += `<button data-act="scale" data-f="${field}" data-v="${i}" class="${val === i ? 'on' : ''}">${i}</button>`;
+  return s + `</div>`;
+}
+
+function saveLog() {
+  const d = draft;
+  if (!d.date) return toast('Укажите дату');
+  const entry = {
+    id: d.id || uid(),
+    createdAt: d.createdAt || new Date().toISOString(),
+    date: d.date, status: d.status, planId: d.planId, title: d.title,
+    wellbeing: d.wellbeing, notes: (d.notes || '').trim()
+  };
+  if (d.status === 'done') {
+    entry.exercises = d.exercises.filter(ex => ex.name.trim()).map(ex => ({
+      name: ex.name.trim(), unit: ex.unit || 'reps', planned: ex.planned || null,
+      sets: ex.sets.map(s => ({ reps: num(s.reps), weight: num(s.weight) ?? 0, done: s.done !== false })),
+      notes: (ex.notes || '').trim()
+    }));
+    if (!entry.exercises.length) return toast('Добавьте хотя бы одно упражнение');
+    entry.effort = d.effort; entry.duration = num(d.duration); entry.sleep = num(d.sleep);
+  } else {
+    entry.reason = (d.reason || '').trim();
+  }
+  const idx = state.history.findIndex(h => h.id === entry.id);
+  if (idx >= 0) state.history[idx] = entry; else state.history.push(entry);
+  save();
+  draft = null; saveDraft();
+  toast('Сохранено. Теперь можно сформировать prompt для Claude');
+  setTab('claude');
+}
+
+/* =====================================================================
+   Вкладка «История»
+   ===================================================================== */
+function viewHistory() {
+  const items = sortedHistory();
+  if (!items.length) return `<div class="card empty"><p>История пуста.</p></div>`;
+  let html = `<h2>История</h2>`;
+  const plansById = Object.fromEntries(state.plans.map(p => [p.id, p]));
+  for (const h of items) {
+    const d = parseIso(h.date); const st = STATUS[h.status];
+    html += `<div class="card"><div class="hist-item">
+      <div class="hist-date"><div class="d">${d.getDate()}</div><div class="m">${MONTHS[d.getMonth()]} · ${WEEKDAYS[d.getDay()]}</div></div>
+      <div class="grow">
+        <div class="row"><b class="grow">${esc(h.title || 'Тренировка')}</b><span class="badge ${st.cls}">${st.glyph} ${st.label}</span></div>
+        <div class="small muted" style="margin:2px 0 6px">${metaLine(h)}</div>`;
+    if (h.status === 'done') {
+      html += (h.exercises || []).map(ex => `<div class="small"><b>${esc(ex.name)}</b>: ${esc(setsLine(ex))}${ex.notes ? ` <span class="muted">— ${esc(ex.notes)}</span>` : ''}</div>`).join('');
+    } else if (h.reason) html += `<div class="small">${esc(h.reason)}</div>`;
+    if (h.notes) html += `<div class="small" style="margin-top:6px"><i>${esc(h.notes)}</i></div>`;
+    const p = h.planId && plansById[h.planId];
+    if (p && (p.summary || p.recommendation)) {
+      html += `<details style="margin-top:6px"><summary>План и рекомендация Claude к этой тренировке</summary>
+        <div class="small" style="margin-top:4px">${p.recommendation ? esc(p.recommendation) : ''}</div></details>`;
+    }
+    html += `<div class="row" style="margin-top:8px">
+        <button class="btn sm" data-act="edit-entry" data-id="${h.id}">Редактировать</button>
+        <button class="btn sm danger" data-act="del-entry" data-id="${h.id}">Удалить</button></div>
+      </div></div></div>`;
+  }
+  return html;
+}
+function metaLine(h) {
+  const parts = [];
+  if (h.wellbeing) parts.push(`самочувствие ${h.wellbeing}/5`);
+  if (h.effort) parts.push(`RPE ${h.effort}/10`);
+  if (h.duration) parts.push(`${h.duration} мин`);
+  if (h.sleep) parts.push(`сон ${h.sleep} ч`);
+  if (h.status === 'done') parts.push(`объём ${Math.round(volume(h))} кг`);
+  return parts.join(' · ');
+}
+function setsLine(ex) {
+  const u = ex.unit === 'sec' ? 'с' : '';
+  return ex.sets.map(s => {
+    const w = s.weight ? `${+s.weight}кг×` : '';
+    return `${w}${s.reps ?? '?'}${u}${s.done === false ? ' (не вып.)' : ''}`;
+  }).join(', ');
+}
+const volume = (h) => (h.exercises || []).reduce((sum, ex) => ex.unit === 'sec' ? sum :
+  sum + ex.sets.reduce((s, x) => s + (x.done !== false ? (x.reps || 0) * (x.weight || 0) : 0), 0), 0);
+
+/* =====================================================================
+   Вкладка «Прогресс»
+   ===================================================================== */
+function exerciseSeries(name) {
+  return [...state.history].filter(h => h.status === 'done').sort((a, b) => a.date.localeCompare(b.date))
+    .map(h => {
+      const ex = (h.exercises || []).find(e => e.name === name); if (!ex) return null;
+      const done = ex.sets.filter(s => s.done !== false);
+      if (!done.length) return null;
+      const isSec = ex.unit === 'sec';
+      const top = done.reduce((a, b) => ((b.weight || 0) > (a.weight || 0) || ((b.weight || 0) === (a.weight || 0) && (b.reps || 0) > (a.reps || 0))) ? b : a);
+      const bw = !done.some(s => s.weight);
+      return {
+        date: h.date,
+        value: (isSec || bw) ? Math.max(...done.map(s => s.reps || 0)) : top.weight,
+        metric: isSec ? 'сек' : bw ? 'повт.' : 'кг',
+        detail: setsLine(ex)
+      };
+    }).filter(Boolean);
+}
+function allExerciseNames() {
+  const seen = new Map();
+  for (const h of state.history) for (const ex of (h.exercises || [])) seen.set(ex.name, (seen.get(ex.name) || 0) + 1);
+  return [...seen.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0]);
+}
+
+function viewProgress() {
+  const hist = state.history;
+  if (!hist.length) return `<div class="card empty"><p>Пока нечего показать.</p></div>`;
+  const done = hist.filter(h => h.status === 'done');
+  const last28 = hist.filter(h => daysBetween(h.date, todayIso()) < 28 && daysBetween(h.date, todayIso()) >= 0);
+  const d28 = last28.filter(h => h.status === 'done').length;
+  const target28 = (state.profile.daysPerWeek || 3) * 4;
+  let html = `<h2>Прогресс</h2><div class="stats">
+    <div class="stat"><div class="v">${done.length}</div><div class="l">тренировок выполнено</div></div>
+    <div class="stat"><div class="v">${d28}<span class="muted" style="font-size:15px"> / ${target28}</span></div><div class="l">за 28 дней (цель)</div></div>
+    <div class="stat"><div class="v">${hist.filter(h => h.status === 'skipped').length}</div><div class="l">пропусков</div></div>
+    <div class="stat"><div class="v">${hist.filter(h => h.status === 'sick').length}</div><div class="l">дней болезни</div></div>
+  </div>`;
+
+  // посещаемость за 8 недель
+  html += `<div class="card"><h3>Посещаемость — последние 8 недель</h3>${attendanceHtml(8)}
+    <div class="legend">
+      <span><i style="background:var(--good-soft);color:var(--good)">✓</i>выполнена</span>
+      <span><i style="background:var(--skip-soft);color:var(--skip)">–</i>пропуск</span>
+      <span><i style="background:var(--warn-soft);color:var(--warn)">+</i>болезнь</span>
+      <span><i style="outline:2px solid var(--accent);outline-offset:-2px"></i>сегодня</span>
+    </div></div>`;
+
+  const names = allExerciseNames();
+  if (!names.includes(ui.progressEx)) ui.progressEx = names[0] || '';
+  const series = exerciseSeries(ui.progressEx);
+  html += `<div class="card">
+    <div class="row" style="margin-bottom:8px"><h3 class="grow" style="margin:0">Динамика упражнения</h3>
+      <select id="exSelect" style="width:auto;max-width:100%">${names.map(n => `<option ${n === ui.progressEx ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></div>
+    <div class="small muted" style="margin-bottom:6px">${series.length ? `Лучший рабочий подход за тренировку, ${series[0].metric}` : ''}</div>
+    <div class="chart-wrap" id="chart"></div>
+    <details style="margin-top:8px"><summary>Таблица</summary>
+      <table class="data" style="margin-top:6px"><thead><tr><th>Дата</th><th>Лучший</th><th>Подходы</th></tr></thead><tbody>
+      ${series.slice().reverse().map(p => `<tr><td>${fmtDate(p.date)}</td><td>${+p.value} ${p.metric}</td><td>${esc(p.detail)}</td></tr>`).join('')}
+      </tbody></table></details>
+  </div>`;
+  return html;
+}
+function attendanceHtml(weeks) {
+  const byDate = {};
+  for (const h of state.history) byDate[h.date] = byDate[h.date] && byDate[h.date] === 'done' ? 'done' : h.status;
+  const today = todayIso();
+  const t = parseIso(today);
+  const mondayOffset = (t.getDay() + 6) % 7;
+  const thisMonday = addDays(today, -mondayOffset);
+  let html = `<div class="att"><div></div>${['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'].map(d => `<div class="h">${d}</div>`).join('')}`;
+  for (let w = weeks - 1; w >= 0; w--) {
+    const mon = addDays(thisMonday, -7 * w);
+    const md = parseIso(mon);
+    html += `<div class="wk">${md.getDate()} ${MONTHS[md.getMonth()]}</div>`;
+    for (let i = 0; i < 7; i++) {
+      const day = addDays(mon, i);
+      const st = byDate[day];
+      const cls = ['c', st || '', day === today ? 'today' : '', day > today ? 'future' : ''].join(' ');
+      html += `<div class="${cls}" title="${fmtDate(day)}${st ? ' — ' + STATUS[st].label : ''}">${st ? STATUS[st].glyph : ''}</div>`;
+    }
+  }
+  return html + `</div>`;
+}
+
+function mountChart() {
+  const sel = $('#exSelect');
+  if (sel) sel.onchange = () => { ui.progressEx = sel.value; saveUi(); render(); };
+  const el = $('#chart'); if (!el) return;
+  const data = exerciseSeries(ui.progressEx);
+  if (data.length < 2) { el.innerHTML = `<p class="small muted">Нужно минимум две тренировки с этим упражнением.</p>`; return; }
+  const W = Math.max(300, Math.round(el.clientWidth || 640)), H = Math.round(Math.min(260, Math.max(200, W * 0.45))), m = { l: 40, r: 14, t: 12, b: 26 };
+  const t0 = parseIso(data[0].date).getTime(), t1 = parseIso(data[data.length - 1].date).getTime();
+  const vals = data.map(d => d.value);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const padV = Math.max((hi - lo) * 0.15, 1); lo = Math.max(0, lo - padV); hi = hi + padV;
+  const x = (d) => m.l + (t1 === t0 ? 0.5 : (parseIso(d).getTime() - t0) / (t1 - t0)) * (W - m.l - m.r);
+  const y = (v) => m.t + (1 - (v - lo) / (hi - lo)) * (H - m.t - m.b);
+  const ticks = niceTicks(lo, hi, 4);
+  const pts = data.map(d => [x(d.date), y(d.value)]);
+  const xIdx = data.length <= 6 ? data.map((_, i) => i) : [0, Math.floor(data.length / 3), Math.floor(2 * data.length / 3), data.length - 1];
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="График: ${esc(ui.progressEx)}">
+    <g class="grid">${ticks.map(t => `<line x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}"/>`).join('')}</g>
+    <g class="axis">${ticks.map(t => `<text x="${m.l - 6}" y="${y(t) + 4}" text-anchor="end">${+t.toFixed(1)}</text>`).join('')}
+      ${xIdx.map(i => { const d = parseIso(data[i].date); return `<text x="${x(data[i].date)}" y="${H - 6}" text-anchor="middle">${d.getDate()} ${MONTHS[d.getMonth()]}</text>`; }).join('')}</g>
+    <path class="line" d="${pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ')}"/>
+    <line class="cross" id="cross" y1="${m.t}" y2="${H - m.b}" style="display:none"/>
+    ${pts.map(p => `<circle class="pt" cx="${p[0]}" cy="${p[1]}" r="4.5"/>`).join('')}
+    <rect id="hit" x="${m.l}" y="0" width="${W - m.l - m.r}" height="${H}" fill="transparent"/>
+  </svg><div class="tip" id="tip"></div>`;
+  const svg = el.querySelector('svg'), tip = $('#tip'), cross = $('#cross');
+  const move = (clientX) => {
+    const r = svg.getBoundingClientRect();
+    const sx = (clientX - r.left) * (W / r.width);
+    let bi = 0; pts.forEach((p, i) => { if (Math.abs(p[0] - sx) < Math.abs(pts[bi][0] - sx)) bi = i; });
+    const p = pts[bi], d = data[bi];
+    cross.setAttribute('x1', p[0]); cross.setAttribute('x2', p[0]); cross.style.display = '';
+    tip.innerHTML = `<b>${fmtDate(d.date)}</b><br>${+d.value} ${d.metric}<br><span class="muted">${esc(d.detail)}</span>`;
+    tip.style.display = 'block';
+    const px = p[0] * r.width / W, py = p[1] * r.height / H;
+    const tw = tip.offsetWidth;
+    tip.style.left = Math.min(Math.max(0, px - tw / 2), r.width - tw) + 'px';
+    tip.style.top = Math.max(0, py - tip.offsetHeight - 12) + 'px';
+  };
+  const hit = $('#hit');
+  hit.addEventListener('mousemove', e => move(e.clientX));
+  hit.addEventListener('touchstart', e => move(e.touches[0].clientX), { passive: true });
+  hit.addEventListener('touchmove', e => move(e.touches[0].clientX), { passive: true });
+  hit.addEventListener('mouseleave', () => { tip.style.display = 'none'; cross.style.display = 'none'; });
+}
+function niceTicks(lo, hi, n) {
+  const span = hi - lo, raw = span / n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(s => s * mag).find(s => span / s <= n) || mag * 10;
+  const out = []; for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(v);
+  return out;
+}
+
+/* =====================================================================
+   Вкладка «Claude ⇄» — экспорт prompt и импорт ответа
+   ===================================================================== */
+function planLine(ex) {
+  const parts = [`${ex.sets} × ${ex.reps} ${unitLabel(ex.unit)}`, fmtW(ex.weight)];
+  if (ex.rest_sec) parts.push(`отдых ${ex.rest_sec} с`);
+  return parts.join(', ');
+}
+
+function buildPrompt(count) {
+  const p = state.profile;
+  const today = todayIso();
+  const hist = sortedHistory();
+  const recent = hist.slice(0, count);
+  const older = hist.slice(count);
+  const plan = currentPlan();
+  const L = [];
+  L.push(`Ты — мой персональный тренер по силовым тренировкам. Проанализируй мои последние тренировки и составь план следующей.`);
+  L.push(`Сегодня: ${today} (${WEEKDAYS[parseIso(today).getDay()]}).`);
+  L.push('');
+  L.push(`## Профиль`);
+  if (p.name) L.push(`- Имя: ${p.name}`);
+  L.push(`- Цель: ${p.goal || '—'}`);
+  L.push(`- Уровень: ${p.level || '—'}`);
+  L.push(`- Тренировок в неделю (цель): ${p.daysPerWeek || '—'}, длительность ~${p.sessionMinutes || '—'} мин`);
+  L.push(`- Оборудование: ${p.equipment || '—'}`);
+  L.push(`- Ограничения/травмы: ${p.limitations || 'нет'}`);
+  if (p.notes) L.push(`- Дополнительно: ${p.notes}`);
+  L.push('');
+
+  if (plan) {
+    const used = state.history.some(h => h.planId === plan.id);
+    L.push(`## Последний выданный план (${plan.date || 'без даты'}${used ? '' : ', ещё не выполнен'}): «${plan.title || ''}»`);
+    (plan.exercises || []).forEach(ex => L.push(`- ${ex.name}: ${planLine(ex)}${ex.notes ? ` — ${ex.notes}` : ''}`));
+    L.push('');
+  }
+
+  L.push(`## Последние ${recent.length} записей (новые сверху)`);
+  if (!recent.length) L.push('Записей пока нет — это первая тренировка, составь стартовый план.');
+  for (const h of recent) {
+    const st = STATUS[h.status];
+    L.push(`### ${h.date} (${WEEKDAYS[parseIso(h.date).getDay()]}) — ${st.label}${h.title ? ` — «${h.title}»` : ''}`);
+    if (h.status === 'done') {
+      const meta = [];
+      if (h.wellbeing) meta.push(`самочувствие ${h.wellbeing}/5`);
+      if (h.effort) meta.push(`тяжесть RPE ${h.effort}/10`);
+      if (h.duration) meta.push(`длительность ${h.duration} мин`);
+      if (h.sleep) meta.push(`сон ${h.sleep} ч`);
+      if (meta.length) L.push(meta.join(', '));
+      for (const ex of h.exercises || []) {
+        const pl = ex.planned ? `план ${ex.planned.sets}×${ex.planned.reps}${ex.unit === 'sec' ? 'с' : ` @ ${fmtW(ex.planned.weight)}`} → ` : '';
+        L.push(`- ${ex.name}: ${pl}факт ${setsLine(ex)}${ex.notes ? ` | ${ex.notes}` : ''}`);
+      }
+    } else {
+      if (h.reason) L.push(`Причина: ${h.reason}`);
+      if (h.wellbeing) L.push(`Самочувствие: ${h.wellbeing}/5`);
+    }
+    if (h.notes) L.push(`Комментарий: ${h.notes}`);
+  }
+  L.push('');
+
+  // Сводка по всей истории — коротко, чтобы видеть тренд без лишних токенов.
+  if (hist.length) {
+    const first = hist[hist.length - 1].date;
+    const c = (s) => hist.filter(h => h.status === s).length;
+    L.push(`## Сводка по всей истории (с ${first})`);
+    L.push(`- Всего записей: ${hist.length} (выполнено ${c('done')}, пропущено ${c('skipped')}, болезнь ${c('sick')})`);
+    const mondayOffset = (parseIso(today).getDay() + 6) % 7;
+    const thisMonday = addDays(today, -mondayOffset);
+    const weeks = [];
+    for (let w = 7; w >= 0; w--) {
+      const mon = addDays(thisMonday, -7 * w), sun = addDays(mon, 6);
+      const inW = hist.filter(h => h.date >= mon && h.date <= sun);
+      if (mon < first && !inW.length) continue;
+      const k = (s) => inW.filter(h => h.status === s).length;
+      weeks.push(`${mon.slice(5)}: ${k('done')}✓${k('skipped') ? ` ${k('skipped')}пропуск` : ''}${k('sick') ? ` ${k('sick')}болезнь` : ''}`);
+    }
+    L.push(`- По неделям (пн, последние 8): ${weeks.join('; ')}`);
+    const last = hist[0];
+    L.push(`- Дней с последней записи: ${daysBetween(last.date, today)}`);
+    const names = allExerciseNames();
+    if (names.length) {
+      L.push(`- Прогресс по упражнениям (первая → лучшая → последняя тренировка):`);
+      for (const n of names) {
+        const s = exerciseSeries(n); if (!s.length) continue;
+        const best = s.reduce((a, b) => b.value >= a.value ? b : a);
+        L.push(`  - ${n}: ${s[0].value} ${s[0].metric} (${s[0].date}) → ${best.value} ${best.metric} (${best.date}) → ${s[s.length - 1].value} ${s[s.length - 1].metric} (${s[s.length - 1].date}); раз выполнено: ${s.length}`);
+      }
+    }
+    if (older.length) L.push(`- Более старые записи (${older.length}) учтены только в этой сводке.`);
+    L.push('');
+  }
+
+  L.push(`## Что нужно от тебя`);
+  L.push(`1. Короткий итог последней тренировки/периода: что получилось, что нет (2–4 предложения).`);
+  L.push(`2. Короткую рекомендацию: что изменить и на что обратить внимание (2–4 предложения).`);
+  L.push(`3. План следующей тренировки: упражнения, подходы, повторы, вес, отдых, подсказки по технике.`);
+  L.push(`Учитывай: прогрессию нагрузок; если все подходы выполнены легко — повышай вес, если не добраны повторы — оставь или снизь; после пропусков и особенно после болезни — сниженная нагрузка и плавный возврат; если сейчас болезнь — предложи восстановительную активность или отдых; баланс групп мышц и чередование тренировок; мои комментарии о самочувствии и болях.`);
+  L.push('');
+  L.push(`## Формат ответа (строго)`);
+  L.push(`Сначала можешь кратко написать текстом. Затем ОБЯЗАТЕЛЬНО один блок \`\`\`json со следующей структурой — я загружу его в приложение:`);
+  L.push('```json');
+  L.push(JSON.stringify({
+    summary: 'Итог прошедшей тренировки, 2–4 предложения',
+    recommendation: 'Короткая рекомендация на следующую тренировку, 2–4 предложения',
+    next_workout: {
+      date: 'YYYY-MM-DD',
+      title: 'Название, например «Full body B»',
+      focus: 'Фокус тренировки',
+      duration_min: 60,
+      warmup: 'Разминка одной-двумя строками',
+      exercises: [{
+        name: 'Название упражнения',
+        sets: 3,
+        reps: '8-10',
+        unit: 'reps',
+        weight: 60,
+        rest_sec: 120,
+        rpe: 8,
+        change: '+2.5 кг',
+        notes: 'Подсказки по технике/выполнению'
+      }],
+      cooldown: 'Заминка',
+      notes: 'Прочие замечания'
+    }
+  }, null, 2));
+  L.push('```');
+  L.push(`Правила для JSON: weight — число в кг (0 = собственный вес; для гантелей — вес одной гантели, укажи это в notes); reps — число или строка-диапазон ("8-10"); unit — "reps" или "sec" (для статики вроде планки); change — коротко, что изменилось относительно прошлого раза ("+2.5 кг", "+1 повтор", "−1 подход", "новое", "без изменений"); используй те же названия упражнений, что и в истории, чтобы я мог отслеживать прогресс. Если нужен день отдыха — всё равно верни next_workout на ближайшую дату тренировки.`);
+  return L.join('\n');
+}
+
+function viewClaude() {
+  const count = ui.promptCount;
+  const prompt = buildPrompt(count);
+  const total = state.history.length;
+  return `<h2>Обмен с Claude</h2>
+  <div class="card">
+    <h3>Шаг 1. Выгрузить prompt</h3>
+    <div class="row small" style="margin-bottom:8px">
+      <span>Подробно последние</span>
+      <select id="promptCount" style="width:auto">${[3, 6, 9, 12, 20].map(n => `<option value="${n}" ${n === count ? 'selected' : ''}>${n}</option>`).join('')}</select>
+      <span>записей из ${total}; остальные — краткой сводкой.</span>
+    </div>
+    <p class="small muted" style="margin-top:0">6 записей ≈ 2 недели при 3 тренировках в неделю: достаточно, чтобы видеть ход прогрессии, пропуски и восстановление после болезни, а длинный тренд по весам уходит в компактную сводку.</p>
+    <pre class="prompt" id="promptText">${esc(prompt)}</pre>
+    <div class="row" style="margin-top:8px">
+      <button class="btn primary" data-act="copy-prompt">Скопировать prompt</button>
+      <button class="btn" data-act="dl-prompt">Скачать .md</button>
+      <span class="small muted">~${Math.round(prompt.length / 1000 * 10) / 10}k символов</span>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Шаг 2. Вставить ответ Claude</h3>
+    <p class="small muted" style="margin-top:0">Вставьте ответ целиком — приложение найдёт в нём блок <code>json</code>.</p>
+    <textarea id="importText" style="min-height:150px" placeholder="Вставьте сюда ответ Claude…"></textarea>
+    <div class="row" style="margin-top:8px">
+      <button class="btn primary" data-act="import-plan">Загрузить план</button>
+      <span class="small muted" id="importMsg"></span>
+    </div>
+  </div>
+  ${state.plans.length > 1 ? `<div class="card"><h3>Предыдущие планы</h3>
+    ${state.plans.slice(0, -1).reverse().slice(0, 10).map(p => `<details style="margin-bottom:6px"><summary>${p.date ? fmtDate(p.date) : ''} — ${esc(p.title || 'План')}</summary>
+      <div class="small" style="margin:4px 0 0 12px">${p.summary ? `<p><b>Итог:</b> ${esc(p.summary)}</p>` : ''}${p.recommendation ? `<p><b>Рекомендация:</b> ${esc(p.recommendation)}</p>` : ''}
+      ${(p.exercises || []).map(ex => `<div>${esc(ex.name)}: ${esc(planLine(ex))}</div>`).join('')}</div></details>`).join('')}</div>` : ''}`;
+}
+
+function extractJson(text) {
+  const fences = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)].map(m => m[1]);
+  const candidates = [...fences.reverse()];
+  const a = text.indexOf('{'), b = text.lastIndexOf('}');
+  if (a >= 0 && b > a) candidates.push(text.slice(a, b + 1));
+  for (const c of candidates) {
+    try { const o = JSON.parse(c.trim()); if (o && typeof o === 'object') return o; } catch (e) {}
+  }
+  return null;
+}
+function normalizePlan(o) {
+  const nw = o.next_workout || o.nextWorkout || o.workout || (o.exercises ? o : null);
+  if (!nw || !Array.isArray(nw.exercises) || !nw.exercises.length) throw new Error('В JSON нет next_workout.exercises');
+  return {
+    id: uid(),
+    createdAt: new Date().toISOString(),
+    date: /^\d{4}-\d{2}-\d{2}$/.test(nw.date || '') ? nw.date : todayIso(),
+    title: String(nw.title || 'Тренировка'),
+    focus: nw.focus ? String(nw.focus) : '',
+    duration_min: num(nw.duration_min),
+    summary: o.summary ? String(o.summary) : '',
+    recommendation: o.recommendation ? String(o.recommendation) : '',
+    warmup: nw.warmup ? String(nw.warmup) : '',
+    cooldown: nw.cooldown ? String(nw.cooldown) : '',
+    notes: nw.notes ? String(nw.notes) : '',
+    exercises: nw.exercises.map(ex => ({
+      name: String(ex.name || 'Упражнение'),
+      sets: Math.max(1, parseInt(ex.sets, 10) || 1),
+      reps: ex.reps ?? '',
+      unit: ex.unit === 'sec' ? 'sec' : 'reps',
+      weight: num(ex.weight) ?? 0,
+      rest_sec: num(ex.rest_sec),
+      rpe: ex.rpe ?? null,
+      change: ex.change ? String(ex.change) : '',
+      notes: ex.notes ? String(ex.notes) : ''
+    }))
+  };
+}
+function importPlan() {
+  const text = $('#importText').value.trim();
+  const msg = $('#importMsg');
+  if (!text) { msg.textContent = 'Поле пустое'; return; }
+  const o = extractJson(text);
+  if (!o) { msg.textContent = 'Не нашёл корректный JSON в тексте. Попросите Claude вернуть блок ```json.'; return; }
+  try {
+    const plan = normalizePlan(o);
+    state.plans.push(plan); save();
+    if (draft && !draft.id) { draft = null; saveDraft(); }
+    toast('План загружен');
+    setTab('today');
+  } catch (e) { msg.textContent = e.message; }
+}
+
+/* =====================================================================
+   Вкладка «Профиль и данные»
+   ===================================================================== */
+function viewSettings() {
+  const p = state.profile;
+  const f = (k, label, type = 'text') => `<label class="f">${label}<input type="${type}" data-p="${k}" value="${esc(p[k])}"></label>`;
+  return `<h2>Профиль</h2>
+  <div class="card">
+    <p class="small muted" style="margin-top:0">Эти данные попадают в prompt, чтобы Claude учитывал цель и ограничения.</p>
+    <div class="grid2">${f('name', 'Имя')}${f('daysPerWeek', 'Тренировок в неделю', 'number')}</div>
+    ${f('goal', 'Цель')}
+    ${f('level', 'Уровень подготовки')}
+    <div class="grid2">${f('sessionMinutes', 'Длительность тренировки, мин', 'number')}</div>
+    ${f('equipment', 'Доступное оборудование')}
+    <label class="f">Ограничения, травмы<textarea data-p="limitations">${esc(p.limitations)}</textarea></label>
+    <label class="f">Прочее (рост, вес, возраст, предпочтения)<textarea data-p="notes">${esc(p.notes)}</textarea></label>
+    <button class="btn primary" data-act="save-profile">Сохранить профиль</button>
+  </div>
+  <h2>Данные</h2>
+  <div class="card">
+    <p class="small" style="margin-top:0">Всё хранится в <b>localStorage этого браузера</b>. Данные не уходят в интернет, но пропадут при очистке данных сайта или в другом браузере/устройстве. Периодически сохраняйте бэкап в файл.</p>
+    <div class="row">
+      <button class="btn primary" data-act="export-json">Скачать бэкап (.json)</button>
+      <button class="btn" data-act="import-json">Восстановить из файла</button>
+    </div>
+    <p class="small muted">Записей: ${state.history.length} · планов: ${state.plans.length}</p>
+  </div>
+  <div class="card">
+    <h3>Демо и сброс</h3>
+    <div class="row">
+      <button class="btn" data-act="load-demo">Загрузить демо-данные</button>
+      <button class="btn danger" data-act="wipe">Удалить все данные</button>
+    </div>
+    <p class="small muted">Демо заменяет текущие данные: 4 недели тренировок A/B с пропуском и простудой + план от «Claude».</p>
+  </div>`;
+}
+
+/* =====================================================================
+   Демо-данные: воображаемые 4 недели (Full body A / B, 3 раза в неделю)
+   ===================================================================== */
+function buildDemo() {
+  const T = todayIso();
+  const ex = (name, weight, reps, opts = {}) => ({
+    name, unit: opts.unit || 'reps',
+    planned: opts.planned || { sets: reps.length, reps: opts.target ?? reps[0], weight },
+    sets: reps.map(r => ({ reps: r, weight, done: true })), notes: opts.notes || ''
+  });
+  const A = (sq, bp, row, plank, n = {}) => [
+    ex('Приседания со штангой', sq[0], sq[1], { target: 8, notes: n.sq }),
+    ex('Жим штанги лёжа', bp[0], bp[1], { target: 8, notes: n.bp }),
+    ex('Тяга штанги в наклоне', row[0], row[1], { target: 10, notes: n.row }),
+    ex('Планка', 0, plank, { unit: 'sec', target: 45, notes: n.pl })
+  ];
+  const B = (rdl, db, pu, lu, n = {}) => [
+    ex('Румынская тяга', rdl[0], rdl[1], { target: 10, notes: n.rdl }),
+    ex('Жим гантелей сидя', db[0], db[1], { target: 10, notes: n.db }),
+    ex('Подтягивания', 0, pu, { target: 6, notes: n.pu }),
+    ex('Выпады с гантелями', lu[0], lu[1], { target: 10, notes: n.lu })
+  ];
+  const d = (offset) => addDays(T, offset);
+  const e = (offset, status, extra) => ({ id: uid(), createdAt: new Date(parseIso(d(offset)).getTime() + 19 * 3600e3).toISOString(), date: d(offset), status, planId: null, ...extra });
+  const history = [
+    e(-27, 'done', { title: 'Full body A', wellbeing: 4, effort: 6, duration: 55, sleep: 7.5, exercises: A([50, [8, 8, 8]], [40, [8, 8, 8]], [35, [10, 10, 10]], [45, 45, 40]), notes: 'Первая тренировка после перерыва, всё легко.' }),
+    e(-25, 'done', { title: 'Full body B', wellbeing: 4, effort: 7, duration: 60, sleep: 7, exercises: B([50, [10, 10, 10]], [14, [10, 10, 9]], [6, 5, 5], [12, [10, 10, 10]], { db: 'вес на одну гантель' }), notes: 'Забились ноги после выпадов.' }),
+    e(-23, 'done', { title: 'Full body A', wellbeing: 4, effort: 7, duration: 58, sleep: 6.5, exercises: A([52.5, [8, 8, 8]], [42.5, [8, 8, 7]], [37.5, [10, 10, 10]], [45, 45, 45]) }),
+    e(-20, 'done', { title: 'Full body B', wellbeing: 5, effort: 7, duration: 62, sleep: 8, exercises: B([55, [10, 10, 10]], [14, [10, 10, 10]], [6, 6, 5], [14, [10, 10, 10]], { db: 'вес на одну гантель' }), notes: 'Отличное самочувствие.' }),
+    e(-18, 'done', { title: 'Full body A', wellbeing: 3, effort: 8, duration: 60, sleep: 6, exercises: A([55, [8, 8, 7]], [42.5, [8, 8, 8]], [40, [10, 10, 9]], [50, 50, 45], { sq: 'в последнем подходе поплыла техника' }), notes: 'Не выспался, тяжеловато.' }),
+    e(-16, 'skipped', { title: 'Full body B', reason: 'Задержался на работе', notes: '' }),
+    e(-13, 'done', { title: 'Full body B', wellbeing: 4, effort: 8, duration: 65, sleep: 7, exercises: B([60, [10, 10, 8]], [16, [8, 8, 7]], [7, 6, 6], [14, [10, 10, 10]], { rdl: 'немного тянуло поясницу в 3 подходе', db: 'вес на одну гантель, 16 кг тяжело' }) }),
+    e(-11, 'sick', { title: 'Full body A', reason: 'Простуда: насморк, температура 37.6, слабость', wellbeing: 2, notes: '' }),
+    e(-9, 'sick', { title: 'Full body A', reason: 'Ещё болею, температуры нет, но слабость', wellbeing: 3, notes: '' }),
+    e(-6, 'done', { title: 'Full body A (облегчённая)', wellbeing: 3, effort: 5, duration: 45, sleep: 8, exercises: A([47.5, [8, 8, 8]], [37.5, [8, 8, 8]], [35, [10, 10, 10]], [40, 40, 40]), notes: 'Первая после болезни, специально легко. Немного кружилась голова в конце.' }),
+    e(-4, 'done', { title: 'Full body B', wellbeing: 4, effort: 6, duration: 55, sleep: 7.5, exercises: B([55, [10, 10, 10]], [14, [10, 10, 10]], [6, 6, 6], [14, [10, 10, 10]], { db: 'вес на одну гантель' }), notes: 'Силы почти вернулись.' }),
+    e(-2, 'done', { title: 'Full body A', wellbeing: 4, effort: 8, duration: 60, sleep: 7, exercises: A([55, [8, 8, 8]], [45, [8, 7, 6]], [40, [10, 10, 10]], [50, 50, 50], { bp: '3-й подход — до отказа' }), notes: 'Приседания пошли хорошо, жим тяжёлый.' })
+  ];
+  const plan = {
+    id: uid(), createdAt: new Date().toISOString(), date: T,
+    title: 'Full body B', focus: 'Задняя поверхность бедра, плечи, спина', duration_min: 60,
+    summary: 'Восстановление после простуды завершено: приседания вернулись на 55 кг с чистой техникой во всех подходах. В жиме лёжа 45 кг пока на пределе (8/7/6), тяга и планка — уверенно.',
+    recommendation: 'Сегодня возвращаем румынскую тягу к 60 кг, следите за нейтральной поясницей — в прошлый раз её тянуло. Жим гантелей держим на 16 кг, но в диапазоне 8–10. Добавляем тягу к лицу для здоровья плеч. Следующий жим лёжа — снова 45 кг, цель 8/8/7.',
+    warmup: '5 мин велотренажёр/гребля, суставная разминка, 2 разминочных подхода румынской тяги с пустым грифом и 40 кг.',
+    exercises: [
+      { name: 'Румынская тяга', sets: 3, reps: 10, unit: 'reps', weight: 60, rest_sec: 120, rpe: 8, change: '+5 кг', notes: 'Таз назад, гриф скользит по бёдрам, спина нейтральная. Если тянет поясницу — остановитесь на 55 кг.' },
+      { name: 'Жим гантелей сидя', sets: 3, reps: '8-10', unit: 'reps', weight: 16, rest_sec: 90, rpe: 8, change: '+2 кг', notes: 'Вес на одну гантель. Добивайте до 10 в первом подходе, далее сколько получится.' },
+      { name: 'Подтягивания', sets: 3, reps: 7, unit: 'reps', weight: 0, rest_sec: 120, rpe: 8, change: '+1 повтор', notes: 'Полная амплитуда, без раскачки. Если 7 не выходит — добирайте негативами.' },
+      { name: 'Выпады с гантелями', sets: 3, reps: 10, unit: 'reps', weight: 16, rest_sec: 90, rpe: 7, change: '+2 кг', notes: 'По 10 на каждую ногу, вес одной гантели.' },
+      { name: 'Тяга верхнего блока к лицу', sets: 3, reps: 15, unit: 'reps', weight: 15, rest_sec: 60, rpe: 7, change: 'новое', notes: 'Канатная рукоять, локти выше кистей, пауза 1 сек в конечной точке.' }
+    ],
+    cooldown: 'Растяжка задней поверхности бедра и грудных, 5–7 минут.',
+    notes: 'Если сон менее 6 часов или самочувствие ≤ 2 — снизьте все веса на 10%.'
+  };
+  return {
+    version: 1,
+    profile: { ...DEFAULT_PROFILE, name: 'Демо', notes: 'Демо-профиль: 32 года, 178 см, 80 кг' },
+    plans: [plan],
+    history
+  };
+}
+
+/* =====================================================================
+   Обработчики событий (делегирование)
+   ===================================================================== */
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const act = b.dataset.act;
+  const i = b.dataset.ex !== undefined ? +b.dataset.ex : null;
+  const j = b.dataset.set !== undefined ? +b.dataset.set : null;
+  switch (act) {
+    case 'goto': setTab(b.dataset.tab); break;
+    case 'start-log': draft = newDraftFromPlan('done'); saveDraft(); setTab('log'); break;
+    case 'quick-status': draft = newDraftFromPlan(b.dataset.status); saveDraft(); setTab('log'); break;
+    case 'set-status':
+      draft.status = b.dataset.status;
+      if (draft.status === 'done' && !draft.exercises.length) {
+        const fresh = newDraftFromPlan('done'); draft.exercises = fresh.exercises;
+      }
+      saveDraft(); render(); break;
+    case 'scale': { const v = +b.dataset.v; draft[b.dataset.f] = draft[b.dataset.f] === v ? null : v; saveDraft(); render(); break; }
+    case 'add-ex': draft.exercises.push({ name: '', unit: 'reps', planned: null, sets: [{ reps: null, weight: 0, done: true }], notes: '' }); saveDraft(); render(); break;
+    case 'del-ex': draft.exercises.splice(i, 1); saveDraft(); render(); break;
+    case 'add-set': { const s = draft.exercises[i].sets; const last = s[s.length - 1] || { reps: null, weight: 0 }; s.push({ reps: last.reps, weight: last.weight, done: true }); saveDraft(); render(); break; }
+    case 'del-set': draft.exercises[i].sets.splice(j, 1); if (!draft.exercises[i].sets.length) draft.exercises.splice(i, 1); saveDraft(); render(); break;
+    case 'save-log': saveLog(); break;
+    case 'reset-draft':
+      if (draft && draft.id) { draft = null; saveDraft(); setTab('history'); }
+      else if (confirm('Сбросить черновик и заполнить заново по текущему плану?')) { draft = newDraftFromPlan(); saveDraft(); render(); }
+      break;
+    case 'edit-entry': {
+      const h = state.history.find(x => x.id === b.dataset.id); if (!h) break;
+      draft = JSON.parse(JSON.stringify({ exercises: [], wellbeing: null, effort: null, duration: '', sleep: '', notes: '', reason: '', ...h }));
+      saveDraft(); setTab('log'); break;
+    }
+    case 'del-entry':
+      if (confirm('Удалить запись?')) { state.history = state.history.filter(x => x.id !== b.dataset.id); save(); render(); }
+      break;
+    case 'copy-prompt': toast(await copyText(buildPrompt(ui.promptCount)) ? 'Prompt скопирован — вставьте его в чат Claude' : 'Не удалось скопировать — выделите текст вручную'); break;
+    case 'dl-prompt': download(`workout-prompt-${todayIso()}.md`, buildPrompt(ui.promptCount), 'text/markdown'); break;
+    case 'import-plan': importPlan(); break;
+    case 'save-profile':
+      document.querySelectorAll('[data-p]').forEach(el => {
+        state.profile[el.dataset.p] = el.type === 'number' ? (num(el.value) ?? '') : el.value.trim();
+      });
+      save(); toast('Профиль сохранён'); render(); break;
+    case 'export-json': download(`workout-backup-${todayIso()}.json`, JSON.stringify(state, null, 2), 'application/json'); break;
+    case 'import-json': $('#fileInput').click(); break;
+    case 'load-demo':
+      if (state.history.length && !confirm('Демо заменит текущие данные. Продолжить? (Сначала можно скачать бэкап.)')) break;
+      state = buildDemo(); save(); draft = null; saveDraft(); toast('Демо-данные загружены'); setTab('today'); break;
+    case 'wipe':
+      if (confirm('Удалить все тренировки, планы и профиль? Это нельзя отменить.')) { state = emptyState(); save(); draft = null; saveDraft(); setTab('today'); }
+      break;
+  }
+});
+
+document.addEventListener('input', (e) => {
+  const el = e.target;
+  if (!draft || ui.tab !== 'log') return;
+  if (el.dataset.f) { draft[el.dataset.f] = el.value; saveDraft(); return; }
+  if (el.dataset.ex !== undefined) {
+    const ex = draft.exercises[+el.dataset.ex]; if (!ex) return;
+    const k = el.dataset.k;
+    if (el.dataset.set !== undefined) {
+      const s = ex.sets[+el.dataset.set];
+      s[k] = k === 'done' ? el.checked : (el.value === '' ? null : num(el.value));
+    } else ex[k] = el.value;
+    saveDraft();
+  }
+});
+document.addEventListener('change', (e) => {
+  const el = e.target;
+  if (el.id === 'promptCount') { ui.promptCount = +el.value; saveUi(); render(); }
+  if (ui.tab === 'log' && el.dataset.k === 'unit') render();
+});
+
+$('#fileInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0]; e.target.value = '';
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    if (!Array.isArray(data.history) || !Array.isArray(data.plans)) throw new Error();
+    if (!confirm(`Восстановить ${data.history.length} записей и ${data.plans.length} планов? Текущие данные будут заменены.`)) return;
+    state = { ...emptyState(), ...data, profile: { ...DEFAULT_PROFILE, ...(data.profile || {}) } };
+    save(); toast('Данные восстановлены'); render();
+  } catch (err) { toast('Файл не похож на бэкап этого приложения'); }
+});
+
+let resizeT; window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => { if (ui.tab === 'progress') mountChart(); }, 150); });
+render();
+</script>
+</body>
+</html>
