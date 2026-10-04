@@ -201,6 +201,18 @@ pre.prompt {
 table.data { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.data th, table.data td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--border); }
 table.data th { color: var(--muted); font-weight: 500; }
+@media print {
+  :root { color-scheme: light; --bg: #fff; --surface: #fff; --surface-2: #f4f4f2; --text: #000; --text-2: #333; --muted: #666; --border: #ccc; }
+  header.top, .no-print, .toast { display: none !important; }
+  body { background: #fff; font-size: 12.5px; }
+  main { max-width: none; padding: 0; }
+  .card { border-color: #ccc; padding: 10px 12px; margin-bottom: 8px; }
+  .card.soft, .callout { break-inside: avoid; }
+  .ex-card { break-inside: avoid; padding: 8px 0; }
+  .ex-scheme { font-size: 18px; }
+  .callout { background: none !important; }
+  .badge { border: 1px solid #ccc; background: none !important; }
+}
 @media (max-width: 560px) {
   .ex-scheme { font-size: 19px; }
   .hist-date { min-width: 48px; }
@@ -332,8 +344,8 @@ async function copyText(text) {
     ta.remove(); return ok;
   }
 }
-function download(filename, text, type = 'text/plain') {
-  const blob = new Blob([text], { type: type + ';charset=utf-8' });
+function download(filename, data, type = 'text/plain') {
+  const blob = data instanceof Blob ? data : new Blob([data], { type: type + ';charset=utf-8' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename;
   document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
 }
@@ -408,7 +420,7 @@ function viewToday() {
   let html = '';
   if (last) {
     const gap = daysBetween(last.date, todayIso());
-    html += `<div class="row small muted" style="margin-bottom:10px">
+    html += `<div class="row small muted no-print" style="margin-bottom:10px">
       Последняя запись: ${fmtDate(last.date)} — <span class="badge ${STATUS[last.status].cls}">${STATUS[last.status].label}</span>
       ${gap > 0 ? `· ${gap} дн. назад` : '· сегодня'}</div>`;
   }
@@ -450,10 +462,20 @@ function viewToday() {
   html += `</div>`;
   if (plan.cooldown) html += `<div class="card soft"><h3>🧘 Заминка</h3><div>${esc(plan.cooldown)}</div></div>`;
   if (plan.notes) html += `<div class="card soft"><h3>📝 Заметки тренера</h3><div>${esc(plan.notes)}</div></div>`;
-  html += `<div class="row" style="margin-top:6px">
+  html += `<div class="row no-print" style="margin-top:6px">
     <button class="btn primary" data-act="start-log">Записать результат</button>
     <button class="btn" data-act="quick-status" data-status="skipped">Отметить пропуск</button>
     <button class="btn" data-act="quick-status" data-status="sick">Болею / плохо себя чувствую</button>
+  </div>
+  <div class="card no-print" style="margin-top:16px">
+    <h3>📱 Взять план с собой</h3>
+    <div class="row">
+      <button class="btn" data-act="plan-png">🖼 Картинка (PNG)</button>
+      <button class="btn" data-act="plan-pdf">📄 PDF / печать</button>
+      <button class="btn" data-act="plan-text">📋 Скопировать текстом</button>
+      ${canShareFiles() ? '<button class="btn" data-act="plan-share">📤 Поделиться</button>' : ''}
+    </div>
+    <p class="small muted" style="margin-bottom:0">Картинку удобно сохранить в галерею телефона. PDF: в окне печати выберите «Сохранить как PDF». Текст с чекбоксами ☐ подходит для «Заметок» или Telegram «Избранное».</p>
   </div>`;
   return html;
 }
@@ -1166,6 +1188,176 @@ function buildSeed() {
 }
 
 /* =====================================================================
+   Экспорт плана на сегодня: PNG (canvas), печать/PDF, текст
+   ===================================================================== */
+const planFileName = (ext) => { const p = currentPlan(); return `workout-${p && p.date ? p.date : todayIso()}.${ext}`; };
+function canShareFiles() {
+  try { return !!(navigator.canShare && navigator.canShare({ files: [new File([''], 'x.png', { type: 'image/png' })] })); }
+  catch (e) { return false; }
+}
+function exTextLines(ex) {
+  const warm = warmupSets(ex);
+  const groups = groupSets(workSets(ex));
+  const lines = [];
+  if (warm.length) lines.push(`Разминка: ${warm.map(w => `${warmW(w.weight)}×${w.reps}`).join(' · ')}`);
+  groups.forEach(g => lines.push(`${g.n} × ${g.reps} ${unitLabel(ex.unit)} · ${fmtW(g.weight)}`));
+  return lines;
+}
+function planAsText(plan) {
+  const L = [`🏋️ ${plan.title || 'Тренировка'}${plan.date ? ` — ${fmtDate(plan.date)}` : ''}`];
+  const meta = [plan.focus, plan.duration_min ? `~${plan.duration_min} мин` : '', plan.rest_between_exercises_sec ? `${fmtRest(plan.rest_between_exercises_sec)} между упражнениями` : ''].filter(Boolean);
+  if (meta.length) L.push(meta.join(' · '));
+  if (plan.recommendation) L.push('', `💡 ${plan.recommendation}`);
+  if (plan.warmup) L.push('', `🔥 Разминка: ${plan.warmup}`);
+  L.push('');
+  (plan.exercises || []).forEach((ex, i) => {
+    L.push(`${i + 1}. ${ex.name}${ex.change ? ` [${ex.change}]` : ''}`);
+    exTextLines(ex).forEach(l => L.push(`   ☐ ${l}`));
+    const meta2 = [ex.rest_sec ? `отдых ${fmtRest(ex.rest_sec)}` : '', ex.rpe ? `RPE ${fmtRpe(ex.rpe)}` : ''].filter(Boolean);
+    if (meta2.length) L.push(`   ${meta2.join(' · ')}`);
+    if (ex.notes) L.push(`   ${ex.notes}`);
+  });
+  if (plan.cooldown) L.push('', `🧘 Заминка: ${plan.cooldown}`);
+  if (plan.notes) L.push('', `📝 ${plan.notes}`);
+  return L.join('\n');
+}
+
+// Рисуем план на canvas вручную — без внешних библиотек, работает офлайн.
+function planImageBlob(plan) {
+  const W = 1080, PAD = 56, SCALE = 1;
+  const C = { bg: '#f4f4f2', card: '#ffffff', border: '#dddcd7', text: '#0b0b0b', text2: '#52514e', muted: '#8a8984',
+    accent: '#2a78d6', accentSoft: '#e3eefb', good: '#1f7a3a', goodSoft: '#e2f3e6', warn: '#9a6400', warnSoft: '#fbf0d9' };
+  const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const font = (size, weight = 400) => `${weight} ${size}px ${FONT}`;
+  const wrap = (text, size, weight, maxW) => {
+    ctx.font = font(size, weight);
+    const out = [];
+    for (const para of String(text).split('\n')) {
+      let line = '';
+      for (const word of para.split(/\s+/)) {
+        const test = line ? `${line} ${word}` : word;
+        if (ctx.measureText(test).width > maxW && line) { out.push(line); line = word; } else line = test;
+      }
+      out.push(line);
+    }
+    return out;
+  };
+  const roundRect = (x, y, w, h, r, fill, stroke) => {
+    ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+    if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+    if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 2; ctx.stroke(); }
+  };
+  const badgeColors = (change) => {
+    const c = String(change).toLowerCase();
+    if (/^\+|нов|добав|увелич/.test(c)) return [C.goodSoft, C.good];
+    if (/^[−-]|сниж|меньш|умень|облегч|разгруз/.test(c)) return [C.warnSoft, C.warn];
+    return [C.accentSoft, C.accent];
+  };
+
+  // Один проход раскладки: draw=false только считает высоту.
+  const layout = (draw) => {
+    let y = PAD;
+    const inner = W - PAD * 2;
+    const text = (str, size, weight, color, x, maxW, lh = 1.35) => {
+      const lines = wrap(str, size, weight, maxW);
+      if (draw) { ctx.font = font(size, weight); ctx.fillStyle = color; ctx.textBaseline = 'top'; lines.forEach((l, i) => ctx.fillText(l, x, y + i * size * lh)); }
+      y += lines.length * size * lh;
+    };
+    // Заголовок
+    text(plan.title || 'Тренировка', 54, 700, C.text, PAD, inner, 1.2);
+    y += 8;
+    const meta = [plan.date ? fmtDate(plan.date) : '', plan.duration_min ? `~${plan.duration_min} мин` : '',
+      plan.rest_between_exercises_sec ? `${fmtRest(plan.rest_between_exercises_sec)} между упражнениями` : ''].filter(Boolean).join('  ·  ');
+    if (meta) text(meta, 28, 500, C.accent, PAD, inner);
+    if (plan.focus) { y += 4; text(plan.focus, 26, 400, C.text2, PAD, inner); }
+    y += 28;
+    // Блоки-подсказки
+    const callout = (title, body, soft, line) => {
+      const pad = 24, w = inner - pad * 2 - 8;
+      const h = pad * 2 + 30 + wrap(body, 27, 400, w).length * 27 * 1.4;
+      if (draw) { roundRect(PAD, y, inner, h, 18, soft); ctx.fillStyle = line; ctx.fillRect(PAD, y + 12, 6, h - 24); }
+      const y0 = y; y += pad;
+      text(title.toUpperCase(), 20, 700, C.text2, PAD + pad + 8, w);
+      y += 6;
+      text(body, 27, 400, C.text, PAD + pad + 8, w, 1.4);
+      y = y0 + h + 18;
+    };
+    if (plan.recommendation) callout('Рекомендация', plan.recommendation, C.accentSoft, C.accent);
+    if (plan.warmup) callout('Разминка', plan.warmup, '#efefec', C.muted);
+    // Упражнения
+    (plan.exercises || []).forEach((ex, i) => {
+      const pad = 28, x = PAD + pad + 70, w = inner - pad * 2 - 70;
+      const y0 = y;
+      // сначала измеряем высоту карточки
+      const measure = () => {
+        let h = pad;
+        const changeW = ex.change ? (ctx.font = font(22, 600), ctx.measureText(ex.change).width + 32) : 0;
+        h += wrap(ex.name, 34, 700, w - changeW - 12).length * 34 * 1.25 + 8;
+        const warm = warmupSets(ex);
+        if (warm.length) h += wrap(`Разминка: ${warm.map(s => `${warmW(s.weight)}×${s.reps}`).join(' · ')}`, 23, 400, w).length * 23 * 1.35 + 4;
+        const groups = groupSets(workSets(ex));
+        h += 50 + (groups.length - 1) * 36;
+        h += 34; // отдых/RPE
+        if (ex.notes) h += 8 + wrap(ex.notes, 24, 400, w).length * 24 * 1.4;
+        return h + pad;
+      };
+      const h = measure();
+      if (draw) {
+        roundRect(PAD, y0, inner, h, 20, C.card, C.border);
+        ctx.beginPath(); ctx.arc(PAD + pad + 26, y0 + pad + 24, 26, 0, Math.PI * 2); ctx.fillStyle = C.accentSoft; ctx.fill();
+        ctx.font = font(26, 700); ctx.fillStyle = C.accent; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(String(i + 1), PAD + pad + 26, y0 + pad + 25); ctx.textAlign = 'left';
+      }
+      y = y0 + pad;
+      let changeW = 0;
+      if (ex.change) {
+        ctx.font = font(22, 600); changeW = ctx.measureText(ex.change).width + 32;
+        if (draw) {
+          const [bg, fg] = badgeColors(ex.change);
+          roundRect(PAD + inner - pad - changeW, y, changeW, 38, 19, bg);
+          ctx.fillStyle = fg; ctx.textBaseline = 'middle'; ctx.fillText(ex.change, PAD + inner - pad - changeW + 16, y + 20);
+        }
+      }
+      text(ex.name, 34, 700, C.text, x, w - changeW - 12, 1.25);
+      y += 8;
+      const warm = warmupSets(ex);
+      if (warm.length) { text(`Разминка: ${warm.map(s => `${warmW(s.weight)}×${s.reps}`).join(' · ')}`, 23, 400, C.muted, x, w); y += 4; }
+      groupSets(workSets(ex)).forEach((g, gi) => {
+        const big = gi === 0;
+        const main = `${g.n} × ${g.reps}`, unit = ` ${unitLabel(ex.unit)} · `, wt = fmtW(g.weight);
+        if (draw) {
+          ctx.textBaseline = 'top'; let cx = x;
+          ctx.font = font(big ? 42 : 28, 700); ctx.fillStyle = C.text; ctx.fillText((big ? '' : '+ ') + main, cx, y); cx += ctx.measureText((big ? '' : '+ ') + main).width;
+          ctx.font = font(big ? 26 : 22, 500); ctx.fillStyle = C.text2; ctx.fillText(unit, cx, y + (big ? 12 : 4)); cx += ctx.measureText(unit).width;
+          ctx.font = font(big ? 42 : 28, 700); ctx.fillStyle = C.text; ctx.fillText(wt, cx, y);
+        }
+        y += big ? 50 : 36;
+      });
+      const meta2 = [ex.rest_sec ? `Отдых ${fmtRest(ex.rest_sec)}` : '', ex.rpe ? `RPE ${fmtRpe(ex.rpe)}` : ''].filter(Boolean).join('  ·  ');
+      if (draw && meta2) { ctx.font = font(23, 500); ctx.fillStyle = C.muted; ctx.textBaseline = 'top'; ctx.fillText(meta2, x, y + 2); }
+      y += 34;
+      if (ex.notes) { y += 8; text(ex.notes, 24, 400, C.text2, x, w, 1.4); }
+      y = y0 + h + 16;
+    });
+    y += 6;
+    if (plan.cooldown) callout('Заминка', plan.cooldown, '#efefec', C.muted);
+    if (plan.notes) callout('Заметки', plan.notes, '#efefec', C.muted);
+    text(`Дневник тренировок · ${todayIso()}`, 20, 400, C.muted, PAD, inner);
+    return y + PAD;
+  };
+
+  canvas.width = W; canvas.height = 100;
+  const H = Math.ceil(layout(false));
+  canvas.width = W * SCALE; canvas.height = H * SCALE;
+  ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
+  layout(true);
+  return new Promise(res => canvas.toBlob(res, 'image/png'));
+}
+
+/* =====================================================================
    Обработчики событий (делегирование)
    ===================================================================== */
 document.addEventListener('click', async (e) => {
@@ -1204,6 +1396,21 @@ document.addEventListener('click', async (e) => {
     case 'copy-prompt': toast(await copyText(buildPrompt(ui.promptCount)) ? 'Prompt скопирован — вставьте его в чат Claude' : 'Не удалось скопировать — выделите текст вручную'); break;
     case 'dl-prompt': download(`workout-prompt-${todayIso()}.md`, buildPrompt(ui.promptCount), 'text/markdown'); break;
     case 'import-plan': importPlan(); break;
+    case 'plan-png': {
+      const blob = await planImageBlob(currentPlan());
+      download(planFileName('png'), blob); toast('Картинка сохранена'); break;
+    }
+    case 'plan-pdf': {
+      const prevTitle = document.title; document.title = planFileName('').replace(/\.$/, '');
+      window.print(); document.title = prevTitle; break;
+    }
+    case 'plan-text': toast(await copyText(planAsText(currentPlan())) ? 'План скопирован текстом' : 'Не удалось скопировать'); break;
+    case 'plan-share': {
+      const blob = await planImageBlob(currentPlan());
+      const file = new File([blob], planFileName('png'), { type: 'image/png' });
+      try { await navigator.share({ files: [file], title: currentPlan().title, text: planAsText(currentPlan()) }); } catch (err) {}
+      break;
+    }
     case 'export-json': download(`workout-backup-${todayIso()}.json`, JSON.stringify(state, null, 2), 'application/json'); break;
     case 'import-json': $('#fileInput').click(); break;
     case 'load-seed':
