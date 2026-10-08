@@ -250,7 +250,6 @@ table.data th { color: var(--muted); font-weight: 500; }
     </div>
     <nav class="tabs" id="tabs">
       <button data-tab="today">Сегодня</button>
-      <button data-tab="log">Описать</button>
       <button data-tab="history">История</button>
       <button data-tab="progress">Прогресс</button>
       <button data-tab="claude">Claude ⇄</button>
@@ -378,6 +377,7 @@ function setTab(tab) { ui.tab = tab; saveUi(); render(); window.scrollTo(0, 0); 
 $('#tabs').addEventListener('click', (e) => { const b = e.target.closest('button[data-tab]'); if (b) setTab(b.dataset.tab); });
 
 function render() {
+  if (ui.tab === 'log' && !(draft && draft.id)) ui.tab = 'claude';
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === ui.tab));
   const active = $('#tabs button.active'); if (active) active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   const done = state.history.filter(h => h.status === 'done').length;
@@ -603,7 +603,7 @@ function viewToday() {
   html += `</div>`;
   if (plan.notes) html += `<div class="card soft"><h3>📝 Заметки тренера</h3><div>${esc(plan.notes)}</div></div>`;
   html += `<div class="row no-print" style="margin-top:6px">
-    <button class="btn primary" data-act="goto" data-tab="log">Описать, как прошла тренировка</button>
+    <button class="btn primary" data-act="goto" data-tab="claude">Описать, как прошла тренировка</button>
   </div>
   <div class="card no-print" style="margin-top:16px">
     <h3>📱 Взять план с собой</h3>
@@ -619,8 +619,8 @@ function viewToday() {
 }
 
 /* =====================================================================
-   Вкладка «Описать»: тренировка описывается свободным текстом, Claude разбирает его в запись.
-   Ручная форма осталась только для правки уже сохранённых записей из «Истории».
+   Правка записи. Новая тренировка описывается свободным текстом на вкладке «Claude ⇄»,
+   ручная форма осталась только для правки уже сохранённых записей из «Истории».
    ===================================================================== */
 function planText(ex) {
   const groups = groupSets(workSets(ex));
@@ -664,24 +664,8 @@ function bodySectionHtml(d) {
     ${wishesHtml(d)}`;
 }
 
-function viewLog() {
-  if (draft && draft.id) return viewEditLog();
-  const plan = currentPlan();
-  const flat = plan ? flatExercises(plan) : [];
-  return `<h2>Как прошла тренировка</h2>
-  <div class="card">
-    <p class="small muted" style="margin-top:0">Опишите своими словами, как всё прошло: по номерам упражнений, что получилось, что нет, веса, повторы, ощущения, самочувствие, сон, вес тела, пожелания. Формат не важен. Если тренировку пропустили или заболели, напишите и это.</p>
-    <textarea id="reportText" style="min-height:220px" placeholder="Например: 1 всё ок. Во втором последний подход только 5. Суперсет сделал 2 круга, на 5Б взял 26. Чувствую себя норм, спал 7 часов, вес 76.4">${esc(ui.report || '')}</textarea>
-    <div class="row" style="margin-top:8px">
-      <button class="btn primary" data-act="report-prompt">Скопировать prompt для Claude</button>
-      <span class="small muted">Текст сохраняется автоматически</span>
-    </div>
-    <p class="small muted" style="margin-bottom:0">Дальше: вставьте prompt в чат Claude, а его ответ — на вкладке «Claude ⇄» (шаг 2). Приложение само запишет тренировку в историю и загрузит новый план.</p>
-  </div>
-  ${flat.length ? `<div class="card soft"><h3>Номера упражнений в плане</h3>
-    <div class="small muted" style="margin:-4px 0 6px">${esc(plan.title || 'План')}${plan.date ? ` · ${fmtDate(plan.date)}` : ''}</div>
-    ${flat.map(({ ex, tag }) => `<div class="small"><b>${esc(tag)}.</b> ${esc(ex.name)} <span class="muted">— ${esc(planText(ex))}</span></div>`).join('')}</div>` : ''}`;
-}
+// Отдельной вкладки нет: «log» открывается только для правки записи из «Истории».
+function viewLog() { return draft && draft.id ? viewEditLog() : viewClaude(); }
 
 function viewEditLog() {
   const d = draft;
@@ -1222,18 +1206,22 @@ function viewClaude() {
   const count = ui.promptCount;
   const prompt = buildPrompt(count);
   const total = state.history.length;
+  const plan = currentPlan();
+  const flat = plan ? flatExercises(plan) : [];
   return `<h2>Обмен с Claude</h2>
   <div class="card">
-    <h3>Шаг 1. Выгрузить prompt</h3>
+    <h3>Шаг 1. Описать тренировку и выгрузить prompt</h3>
+    <label class="f">Как прошла тренировка (необязательно)
+      <textarea id="reportText" style="min-height:160px" placeholder="Своими словами, в любом виде: по номерам упражнений, веса, повторы, ощущения, самочувствие, сон, вес тела. Если пропустили или заболели — напишите и это.">${esc(ui.report || '')}</textarea></label>
+    ${flat.length ? `<details class="small" style="margin:-4px 0 10px"><summary>Номера упражнений в плане «${esc(plan.title || 'План')}»</summary>
+      <div style="margin-top:4px">${flat.map(({ ex, tag }) => `<div><b>${esc(tag)}.</b> ${esc(ex.name)} <span class="muted">— ${esc(planText(ex))}</span></div>`).join('')}</div></details>` : ''}
+    <p class="small muted" style="margin-top:0">Claude разберёт описание в запись тренировки, приложение сохранит её в историю на шаге 2 вместе с новым планом. Без описания Claude вернёт только план.</p>
     <div class="row small" style="margin-bottom:8px">
       <span>Подробно последние</span>
       <select id="promptCount" style="width:auto">${[3, 6, 9, 12, 20].map(n => `<option value="${n}" ${n === count ? 'selected' : ''}>${n}</option>`).join('')}</select>
       <span>записей из ${total}; остальные — краткой сводкой.</span>
     </div>
     <p class="small muted" style="margin-top:0">6 записей ≈ 3 недели при 2 тренировках в неделю: достаточно, чтобы видеть ход прогрессии, пропуски и восстановление после болезни, а длинный тренд по весам уходит в компактную сводку.</p>
-    ${(ui.report || '').trim()
-      ? `<div class="callout good small" style="margin-bottom:8px">Описание тренировки включено в prompt — Claude вернёт её запись вместе с планом. <button class="btn sm" data-act="goto" data-tab="log">Изменить</button></div>`
-      : `<div class="callout small" style="margin-bottom:8px">Описания прошедшей тренировки нет. <button class="btn sm" data-act="goto" data-tab="log">Описать тренировку</button></div>`}
     <label class="f">Пожелания или корректировка плана (необязательно)<textarea id="reqText" placeholder="Например: хочу вернуть жим гантелей сидя; в пятницу будет только 50 минут">${esc(ui.reqText || '')}</textarea></label>
     <label class="chk-line"><input type="checkbox" id="reqInsist" ${ui.reqInsist ? 'checked' : ''}> Настаиваю: применить, даже если тренер считает это неоптимальным</label>
     <p class="small muted" style="margin-top:0">Claude сначала оценит пожелание: что эффективно и безопасно, применит; что нет — подсветит и предложит альтернативу. Без отметки «Настаиваю» спорные пожелания применяться не будут.</p>
@@ -1812,10 +1800,6 @@ document.addEventListener('click', async (e) => {
   const j = b.dataset.set !== undefined ? +b.dataset.set : null;
   switch (act) {
     case 'goto': setTab(b.dataset.tab); break;
-    case 'report-prompt':
-      ui.report = $('#reportText').value; saveUi();
-      toast(await copyText(buildPrompt(ui.promptCount)) ? 'Prompt с описанием тренировки скопирован — вставьте его в чат Claude' : 'Не удалось скопировать — откройте вкладку «Claude ⇄»');
-      break;
     case 'set-status':
       draft.status = b.dataset.status;
       if (draft.status === 'done' && !draft.exercises.length) {
@@ -1874,13 +1858,12 @@ document.addEventListener('click', async (e) => {
 
 document.addEventListener('input', (e) => {
   const el = e.target;
-  if (el.id === 'reqText' || el.id === 'reqInsist') {
-    ui.reqText = $('#reqText').value; ui.reqInsist = $('#reqInsist').checked; saveUi();
+  if (el.id === 'reqText' || el.id === 'reqInsist' || el.id === 'reportText') {
+    ui.reqText = $('#reqText').value; ui.reqInsist = $('#reqInsist').checked; ui.report = $('#reportText').value; saveUi();
     const pr = buildPrompt(ui.promptCount);
     $('#promptText').textContent = pr; $('#promptSize').textContent = `~${Math.round(pr.length / 100) / 10}k символов`;
     return;
   }
-  if (el.id === 'reportText') { ui.report = el.value; saveUi(); return; }
   if (!draft || ui.tab !== 'log') return;
   if (el.dataset.f) { draft[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value; saveDraft(); return; }
   if (el.dataset.ex !== undefined) {
