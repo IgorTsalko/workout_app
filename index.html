@@ -1095,7 +1095,7 @@ function buildPrompt(count) {
   const report = (ui.report || '').trim();
   if (report) {
     L.push(`## Как прошла тренировка (мой текст, как есть)`);
-    L.push(`Пишу свободно. Номера упражнений — из последнего выданного плана выше (1, 2…, части суперсета 5А, 5Б).`);
+    L.push(`Пишу свободно. Номера упражнений — из последнего выданного плана выше (1, 2…, части суперсета 5А, 5Б). Здесь же мои пожелания к следующей тренировке и то, на чём я настаиваю.`);
     L.push('"""');
     L.push(report);
     L.push('"""');
@@ -1158,8 +1158,7 @@ function buildPrompt(count) {
     L.push('');
   }
 
-  // Пожелания: текущий запрос, пожелания из недавних записей и всё, на чём я настаивал раньше.
-  const reqText = (ui.reqText || '').trim();
+  // Пожелания: из текущего описания, из недавних записей и всё, на чём я настаивал раньше.
   // Новые — оставлены после выдачи текущего плана; уже учтённые без «настаиваю» больше не повторяем.
   const planAt = plan ? plan.createdAt || '' : '';
   const isNew = (h) => (h.createdAt || '') > planAt;
@@ -1169,8 +1168,8 @@ function buildPrompt(count) {
     ...(state.requests || []).filter(r => r.insist).map(r => ({ date: r.date, text: r.text }))
   ].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10);
   L.push(`## Мои пожелания`);
-  if (!reqText && !recentWishes.length && !insistedBefore.length) L.push('Особых пожеланий нет.');
-  if (reqText) L.push(`- Сейчас ${ui.reqInsist ? '[НАСТАИВАЮ]' : '[пожелание]'}: ${reqText}`);
+  if (!report && !recentWishes.length && !insistedBefore.length) L.push('Особых пожеланий нет.');
+  if (report) L.push(`- Сейчас: найди пожелания в моём тексте «Как прошла тренировка» выше (если их там нет — значит, новых нет). Просьбу что-то добавить, убрать или изменить считай [пожелание]. Если я пишу «настаиваю», «обязательно», «это важно», «сделай именно так» или так же явно выделяю что-то как важное — считай это [НАСТАИВАЮ].`);
   recentWishes.forEach(h => L.push(`- После тренировки ${h.date} ${h.insist ? '[НАСТАИВАЮ]' : '[пожелание]'}: ${h.wishes}`));
   if (insistedBefore.length) {
     L.push(`- Ранее я настоял (действует, пока я не отменю):`);
@@ -1250,7 +1249,7 @@ function buildPrompt(count) {
   L.push('```');
   L.push(`Правила для JSON: weight — число в кг (0 = собственный вес, null = вес подобрать на месте; для гантелей — вес одной гантели); reps — число или строка-диапазон ("8-10"); unit — "reps" или "sec"; rpe — целевая тяжесть в процентах (50–100); rest_sec — отдых между подходами; суперсет — отдельный пункт с type "superset": rounds — число кругов, rest_sec — отдых после круга, parts — упражнения, которые делаются подряд без отдыха (в истории они помечены как «суперсет 5А/5Б»); sets_detail — необязательный полный список подходов, когда веса/повторы различаются или есть разминочные подходы (warmup: true), тогда sets = число рабочих подходов; change — коротко, что изменилось относительно прошлого раза ("+2.5 кг", "+1 повтор", "−1 подход", "новое", "без изменений"). Используй те же названия упражнений, что и в истории, чтобы я мог отслеживать прогресс. Разминка и заминка — первый и последний пункты exercises с kind "warmup"/"cooldown" и duration_min. Время тренировки приложение считает само: подход ≈ 3 сек на повтор + 10 сек (30–90 сек), разминочный подход + 1 мин отдыха, rest_sec между рабочими подходами, rest_between_exercises_sec между упражнениями, переход между частями суперсета 15 сек, плюс разминка и заминка. Подбирай подходы и отдых так, чтобы по этому расчёту тренировка была около ориентира по длительности. wishes_review — по одному пункту на каждое моё пожелание (пустой массив, если пожеланий нет); decision — строго одно из четырёх значений.`);
   L.push(`Правила для profile_update: это твои правки в разделе «Обо мне» — ты мой тренер и ведёшь эти данные. Поля: ${PROFILE_FIELDS.map(([k, l]) => `${k} (${l.toLowerCase()})`).join(', ')}, а также session_minutes — ориентир длительности числом. Значение поля — полный новый текст, он заменит старый целиком, поэтому сохрани из старого всё, что остаётся верным. recommendations — твои постоянные рекомендации, которые должны действовать во всех следующих тренировках (отдых, техника, восстановление, питание); то, что касается только следующей тренировки, пиши в recommendation. Включай только изменившиеся поля, а когда менять нечего — не включай profile_update вообще. Меняй, когда для этого есть причина: я сообщил о новой боли или травме, ограничение снято, сменились расписание или цель, ты выработал правило по отдыху. reason — коротко, почему меняешь.`);
-  if (report) L.push(`Правила для completed_workout: это запись о тренировке из моего текста, приложение сохранит её в историю без ручной правки, поэтому ничего не выдумывай. date — дата тренировки (если не сказано, сегодня). status: "done" — тренировка была (хотя бы частично), "skipped" — пропуск, "sick" — болезнь; для skipped/sick причина в reason, exercises пустой. В exercises — каждое упражнение плана по номеру tag ("2", "5А"; у суперсета — каждая часть отдельно), название и план приложение подставит само по номеру. as_planned: true — сделано как в плане (и если я про упражнение ничего не сказал — тоже as_planned, но отметь это в assumptions). Если что-то отличалось — sets: полный список фактически сделанных подходов {weight, reps, warmup?, done?}, подходы, которые я не сделал, не включай. skipped: true — упражнение не делал. Упражнение не из плана — tag null и name (то же название, что в истории, если оно там есть). rpe — тяжесть упражнения в процентах, только если я её назвал или явно описал (например, «до отказа» = 100). wellbeing — самочувствие 1–5, effort — общая тяжесть тренировки в %, duration — минуты, sleep — часы сна, bodyweight — кг; чего нет в тексте — null. wishes — мои пожелания к следующей тренировке из текста, insist — true, только если я прямо настаиваю; эти пожелания тоже отрази в wishes_review. assumptions — всё, что пришлось додумать или что могло быть понято двояко (пустой массив, если всё ясно).`);
+  if (report) L.push(`Правила для completed_workout: это запись о тренировке из моего текста, приложение сохранит её в историю без ручной правки, поэтому ничего не выдумывай. date — дата тренировки (если не сказано, сегодня). status: "done" — тренировка была (хотя бы частично), "skipped" — пропуск, "sick" — болезнь; для skipped/sick причина в reason, exercises пустой. В exercises — каждое упражнение плана по номеру tag ("2", "5А"; у суперсета — каждая часть отдельно), название и план приложение подставит само по номеру. as_planned: true — сделано как в плане (и если я про упражнение ничего не сказал — тоже as_planned, но отметь это в assumptions). Если что-то отличалось — sets: полный список фактически сделанных подходов {weight, reps, warmup?, done?}, подходы, которые я не сделал, не включай. skipped: true — упражнение не делал. Упражнение не из плана — tag null и name (то же название, что в истории, если оно там есть). rpe — тяжесть упражнения в процентах, только если я её назвал или явно описал (например, «до отказа» = 100). wellbeing — самочувствие 1–5, effort — общая тяжесть тренировки в %, duration — минуты, sleep — часы сна, bodyweight — кг; чего нет в тексте — null. wishes — мои пожелания к следующей тренировке из текста, insist — true, если я на них настаиваю (см. «Мои пожелания»); эти пожелания тоже отрази в wishes_review. Если в тексте нет описания тренировки, а есть только пожелания, — не включай completed_workout, а пожелания верни отдельным полем верхнего уровня request: { "text": "...", "insist": true|false }. assumptions — всё, что пришлось додумать или что могло быть понято двояко (пустой массив, если всё ясно).`);
   return L.join('\n');
 }
 
@@ -1264,19 +1263,16 @@ function viewClaude() {
   <div class="card">
     <h3>Шаг 1. Описать тренировку и выгрузить prompt</h3>
     <label class="f">Как прошла тренировка (необязательно)
-      <textarea id="reportText" style="min-height:160px" placeholder="Своими словами, в любом виде: по номерам упражнений, веса, повторы, ощущения, самочувствие, сон, вес тела. Если пропустили или заболели — напишите и это.">${esc(ui.report || '')}</textarea></label>
+      <textarea id="reportText" style="min-height:160px" placeholder="Своими словами, в любом виде: по номерам упражнений, веса, повторы, ощущения, самочувствие, сон, вес тела. Если пропустили или заболели — напишите и это. Здесь же пожелания к следующей тренировке; то, на чём настаиваете, отметьте словом «настаиваю» или «важно».">${esc(ui.report || '')}</textarea></label>
     ${flat.length ? `<details class="small" style="margin:-4px 0 10px"><summary>Номера упражнений в плане «${esc(plan.title || 'План')}»</summary>
       <div style="margin-top:4px">${flat.map(({ ex, tag }) => `<div><b>${esc(tag)}.</b> ${esc(ex.name)} <span class="muted">— ${esc(planText(ex))}</span></div>`).join('')}</div></details>` : ''}
-    <p class="small muted" style="margin-top:0">Claude разберёт описание в запись тренировки, приложение сохранит её в историю на шаге 2 вместе с новым планом. Без описания Claude вернёт только план.</p>
+    <p class="small muted" style="margin-top:0">Claude разберёт описание в запись тренировки, приложение сохранит её в историю на шаге 2 вместе с новым планом. Без описания Claude вернёт только план. Пожелания Claude сначала оценит: что эффективно и безопасно, применит, что нет — подсветит и предложит альтернативу. То, на чём вы настаиваете, применит в любом случае и предупредит о рисках.</p>
     <div class="row small" style="margin-bottom:8px">
       <span>Подробно последние</span>
       <select id="promptCount" style="width:auto">${[3, 6, 9, 12, 20].map(n => `<option value="${n}" ${n === count ? 'selected' : ''}>${n}</option>`).join('')}</select>
       <span>записей из ${total}; остальные — краткой сводкой.</span>
     </div>
     <p class="small muted" style="margin-top:0">6 записей ≈ 3 недели при 2 тренировках в неделю: достаточно, чтобы видеть ход прогрессии, пропуски и восстановление после болезни, а длинный тренд по весам уходит в компактную сводку.</p>
-    <label class="f">Пожелания или корректировка плана (необязательно)<textarea id="reqText" placeholder="Например: хочу вернуть жим гантелей сидя; в пятницу будет только 50 минут">${esc(ui.reqText || '')}</textarea></label>
-    <label class="chk-line"><input type="checkbox" id="reqInsist" ${ui.reqInsist ? 'checked' : ''}> Настаиваю: применить, даже если тренер считает это неоптимальным</label>
-    <p class="small muted" style="margin-top:0">Claude сначала оценит пожелание: что эффективно и безопасно, применит; что нет — подсветит и предложит альтернативу. Без отметки «Настаиваю» спорные пожелания применяться не будут.</p>
     <pre class="prompt" id="promptText">${esc(prompt)}</pre>
     <div class="row" style="margin-top:8px">
       <button class="btn primary" data-act="copy-prompt">Скопировать prompt</button>
@@ -1426,7 +1422,8 @@ function importPlan() {
     const plan = o.next_workout || o.nextWorkout || o.workout || o.exercises || (!entry && !upd) ? normalizePlan(o) : null;
     if (ui.lastImport === text && !confirm('Этот ответ уже загружен. Загрузить ещё раз? (Запись и план продублируются.)')) return;
     ui.lastImport = text;
-    if (entry) { state.history.push(entry); ui.report = ''; }
+    if (entry || plan) ui.report = '';
+    if (entry) state.history.push(entry);
     saveUi();
     const changes = applyProfileUpdate(upd, 'coach');
     const updMsg = changes.length ? `, данные «Обо мне» обновлены (${changes.length})` : '';
@@ -1437,11 +1434,11 @@ function importPlan() {
       return;
     }
     if (changes.length) plan.profile_changes = changes;
-    const req = (ui.reqText || '').trim();
+    // Пожелания без описания тренировки Claude возвращает отдельно в request.
+    const req = !entry && o.request && o.request.text ? String(o.request.text).trim() : '';
     if (req) {
-      plan.request = { text: req, insist: !!ui.reqInsist };
-      state.requests = [...(state.requests || []), { date: todayIso(), text: req, insist: !!ui.reqInsist }];
-      ui.reqText = ''; ui.reqInsist = false; saveUi();
+      plan.request = { text: req, insist: !!o.request.insist };
+      state.requests = [...(state.requests || []), { date: todayIso(), text: req, insist: !!o.request.insist }];
     }
     state.plans.push(plan); save();
     if (draft && !draft.id) { draft = null; saveDraft(); }
@@ -1948,8 +1945,8 @@ document.addEventListener('click', async (e) => {
 
 document.addEventListener('input', (e) => {
   const el = e.target;
-  if (el.id === 'reqText' || el.id === 'reqInsist' || el.id === 'reportText') {
-    ui.reqText = $('#reqText').value; ui.reqInsist = $('#reqInsist').checked; ui.report = $('#reportText').value; saveUi();
+  if (el.id === 'reportText') {
+    ui.report = el.value; saveUi();
     const pr = buildPrompt(ui.promptCount);
     $('#promptText').textContent = pr; $('#promptSize').textContent = `~${Math.round(pr.length / 100) / 10}k символов`;
     return;
