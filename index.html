@@ -133,10 +133,12 @@ label.f > input, label.f > textarea, label.f > select { margin-top: 4px; }
 .ex-scheme .unit { font-size: 14px; font-weight: 500; color: var(--text-2); }
 .badge.time { background: none; border: 1px solid var(--border); color: var(--text-2); margin-left: 6px; }
 .ex-num.stage { background: var(--surface-2); font-size: 15px; }
-.steps { list-style: none; counter-reset: st; padding: 0; margin: 8px 0 0; font-size: 13.5px; }
-.steps li { counter-increment: st; display: flex; flex-wrap: wrap; column-gap: 10px; align-items: baseline; padding: 4px 0; border-top: 1px dashed var(--border); }
-.steps li::before { content: counter(st); min-width: 16px; color: var(--muted); font-size: 12px; }
-.steps .then { margin-left: auto; color: var(--muted); text-align: right; white-space: nowrap; }
+.grp { margin-top: 6px; }
+.grp-h { font-size: 11.5px; font-weight: 600; letter-spacing: .4px; text-transform: uppercase; color: var(--muted); }
+.grp-h .rest { text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--text-2); }
+.grp-warm { font-size: 14px; color: var(--text-2); margin-top: 1px; }
+.rest-after { margin-top: 8px; padding: 6px 10px; border-radius: 8px; background: var(--surface-2); font-size: 13px; color: var(--text-2); }
+.rest-after b { color: var(--text); }
 .ss-head { font-size: 13px; color: var(--text-2); margin: 2px 0 4px; }
 .ss-part { display: grid; grid-template-columns: 28px 1fr; gap: 8px; background: var(--surface-2); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 8px 10px; margin-top: 6px; }
 .ss-label { width: 26px; height: 26px; border-radius: 6px; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; font-weight: 700; font-size: 13px; }
@@ -406,7 +408,7 @@ const warmupSets = (ex) => Array.isArray(ex.sets_detail) ? ex.sets_detail.filter
 // Суперсет — один пункт плана из нескольких частей (А, Б…), выполняемых подряд без отдыха.
 const SS_LABELS = ['А', 'Б', 'В', 'Г'];
 const isSuperset = (ex) => Array.isArray(ex.parts) && ex.parts.length > 0;
-const supersetHead = (ex) => `${ex.sets || 1} ${plural(ex.sets || 1, 'круг', 'круга', 'кругов')}: ${ex.parts.map((_, j) => SS_LABELS[j]).join(' → ')} без отдыха${ex.rest_sec ? `, затем отдых ${fmtRest(ex.rest_sec)}` : ''}`;
+const supersetHead = (ex) => `${ex.sets || 1} ${plural(ex.sets || 1, 'круг', 'круга', 'кругов')}: ${ex.parts.map((_, j) => SS_LABELS[j]).join(' → ')} без отдыха${ex.rest_sec ? `, отдых ${fmtRest(ex.rest_sec)} между кругами` : ''}`;
 function plural(n, one, few, many) { const m10 = n % 10, m100 = n % 100; return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many; }
 // Разминка и заминка — отдельные пункты плана с длительностью (kind: warmup / cooldown).
 const isStage = (ex) => ex.kind === 'warmup' || ex.kind === 'cooldown';
@@ -452,18 +454,15 @@ function planItems(plan) {
 }
 const loadText = (e, x) => e.unit === 'sec' ? `${x.reps} сек${x.weight ? ` · ${+x.weight} кг` : ''}`
   : (x.weight === null || x.weight === undefined || x.weight === '') ? `? кг × ${x.reps}` : Number(x.weight) === 0 ? `${x.reps} повт.` : `${+x.weight} кг × ${x.reps}`;
-const nextLabel = (it) => !it.next ? 'конец' : it.next.ex.kind === 'cooldown' ? 'заминка' : it.next.num ? `упр. ${it.next.num}` : it.next.ex.name;
-// Шаги пункта в виде строк [что делать, что дальше].
-function stepLines(it) {
-  const ex = it.ex;
-  return it.steps.map(st => {
-    const what = st.round
-      ? `Круг ${st.round}: ${ex.parts.map((_, j) => SS_LABELS[j]).join(' → ')}`
-      : `${loadText(ex, st.set)}${st.set.warmup ? ' (разм.)' : ''}`;
-    const then = !st.last ? `отдых ${fmtRest(st.rest)}` : st.rest ? `отдых ${fmtRest(st.rest)} → ${nextLabel(it)}` : `→ ${nextLabel(it)}`;
-    return [what, then];
-  });
-}
+// Отдых после последнего подхода/круга пункта (0 — дальше заминка или конец).
+const restAfter = (it) => it.steps.length ? it.steps[it.steps.length - 1].rest : 0;
+// Разминочные подходы одной строкой: «20×15 · 45×6 · 62.5×3».
+const warmupLine = (ex) => warmupSets(ex).map(w => {
+  const wt = w.weight === null || w.weight === undefined || w.weight === '' ? 'лёгкий вес × ' : Number(w.weight) === 0 ? 'б/в × ' : `${+w.weight}×`;
+  return `${wt}${w.reps}${ex.unit === 'sec' ? ' сек' : ''}`;
+}).join(' · ');
+// Отдых между рабочими подходами — только если рабочих подходов больше одного.
+const workRest = (ex) => ex.rest_sec && workSets(ex).length > 1 ? ex.rest_sec : 0;
 
 // Плоский список упражнений плана: части суперсетов разворачиваются с меткой «5А», «5Б».
 function flatExercises(plan) {
@@ -475,14 +474,17 @@ function flatExercises(plan) {
   return out;
 }
 
-function schemeHtml(ex) {
+// Схема подходов: разминочные одной строкой и рабочие крупно, у каждой группы — отдых между подходами.
+function schemeHtml(ex, withRest = true) {
   const groups = groupSets(workSets(ex));
   const [main, ...rest] = groups.length ? groups : [{ n: ex.sets || 1, reps: ex.reps, weight: ex.weight }];
-  const warm = warmupSets(ex);
-  return `${warm.length ? `<div class="small muted">+ ${warm.length} разминочных подхода</div>` : ''}
+  const warm = warmupLine(ex), wr = withRest ? workRest(ex) : 0;
+  const restTag = (sec) => sec ? ` <span class="rest">· отдых ${fmtRest(sec)}</span>` : '';
+  return `${warm ? `<div class="grp"><div class="grp-h">Разминка${restTag(WARMUP_SET_REST)}</div><div class="grp-warm">${esc(warm)}</div></div>` : ''}
+    <div class="grp">${warm || wr ? `<div class="grp-h">Рабочие${restTag(wr)}</div>` : ''}
     <div class="ex-scheme">${esc(main.n)} × ${esc(main.reps ?? '—')} <span class="unit">${unitLabel(ex.unit)}</span>
     <span class="unit">·</span> ${esc(fmtW(main.weight))}</div>
-    ${rest.map(g => `<div class="small"><b>+ ${g.n} × ${esc(g.reps)}</b> · ${esc(fmtW(g.weight))}</div>`).join('')}`;
+    ${rest.map(g => `<div class="small"><b>+ ${g.n} × ${esc(g.reps)}</b> · ${esc(fmtW(g.weight))}</div>`).join('')}</div>`;
 }
 function changeBadge(change) {
   if (!change) return '';
@@ -552,8 +554,8 @@ function viewToday() {
   for (const it of timeline.items) {
     const ex = it.ex;
     const time = `<span class="badge time">⏱ ${fmtMin(it.start)}–${fmtMin(it.end)} мин</span>`;
-    const steps = stepLines(it);
-    const stepsHtml = steps.length ? `<ol class="steps">${steps.map(([what, then]) => `<li><span>${esc(what)}</span><span class="then">${esc(then)}</span></li>`).join('')}</ol>` : '';
+    const after = restAfter(it);
+    const restHtml = after ? `<div class="rest-after">⏸ Отдых <b>${fmtRest(after)}</b></div>` : '';
     if (isStage(ex)) {
       html += `<div class="ex-card">
         <div class="ex-num stage">${ex.kind === 'warmup' ? '🔥' : '🧘'}</div>
@@ -576,13 +578,13 @@ function viewToday() {
             <div class="ss-label">${SS_LABELS[j]}</div>
             <div>
               <div class="row"><span class="ex-name grow">${esc(p.name)}</span>${changeBadge(p.change)}</div>
-              ${schemeHtml({ ...p, sets: ex.sets })}
+              ${schemeHtml({ ...p, sets: ex.sets }, false)}
               ${p.rpe ? `<div class="small muted">Целевое RPE ${fmtRpe(p.rpe)}</div>` : ''}
               ${p.notes ? `<div class="small" style="margin-top:4px">${esc(p.notes)}</div>` : ''}
             </div>
           </div>`).join('')}
-          ${stepsHtml}
           ${ex.notes ? `<div class="small" style="margin-top:6px">${esc(ex.notes)}</div>` : ''}
+          ${restHtml}
         </div>
       </div>`;
       continue;
@@ -593,8 +595,8 @@ function viewToday() {
         <div class="row"><span class="ex-name grow">${esc(ex.name)}</span>${changeBadge(ex.change)}${time}</div>
         ${schemeHtml(ex)}
         ${ex.rpe ? `<div class="small muted">Целевое RPE ${fmtRpe(ex.rpe)}</div>` : ''}
-        ${stepsHtml}
         ${ex.notes ? `<div class="small" style="margin-top:6px">${esc(ex.notes)}</div>` : ''}
+        ${restHtml}
       </div>
     </div>`;
   }
@@ -1473,11 +1475,19 @@ function planAsText(plan) {
         L.push(`   ${SS_LABELS[j]}) ${p.name}${p.change ? ` [${p.change}]` : ''}${p.rpe ? ` · RPE ${fmtRpe(p.rpe)}` : ''}`);
         if (p.notes) L.push(`      ${p.notes}`);
       });
+      L.push(`   ${'☐'.repeat(ex.sets || 1)} ${supersetHead(ex)}`);
     } else {
       L.push(`${it.num}. ${ex.name} ${when}${ex.change ? ` [${ex.change}]` : ''}${ex.rpe ? ` · RPE ${fmtRpe(ex.rpe)}` : ''}`);
     }
-    stepLines(it).forEach(([what, then]) => L.push(`   ☐ ${what} → ${then.replace(/^→ /, '')}`));
+    if (!isSuperset(ex)) {
+      // Чекбокс на каждый подход, одинаковые подряд подходы — в одной строке: «☐☐☐ 77.5 кг × 6».
+      const boxes = (g) => `${'☐'.repeat(g.n)} ${loadText(ex, g)}`;
+      if (warmupSets(ex).length) L.push(`   Разминка (отдых ${fmtRest(WARMUP_SET_REST)}): ${groupSets(warmupSets(ex)).map(boxes).join(', ')}`);
+      const wr = workRest(ex);
+      L.push(`   ${warmupSets(ex).length || wr ? `Рабочие${wr ? ` (отдых ${fmtRest(wr)})` : ''}: ` : ''}${groupSets(workSets(ex)).map(boxes).join(', ')}`);
+    }
     if (ex.notes) L.push(`   ${ex.notes}`);
+    if (restAfter(it)) L.push(`   ⏸ Отдых ${fmtRest(restAfter(it))}`);
   }
   if (plan.notes) L.push('', `📝 ${plan.notes}`);
   return L.join('\n');
@@ -1563,7 +1573,17 @@ function planImageBlob(plan) {
         if (d) { const [bg, fg] = badgeColors(change); roundRect(right - bw, P.y, bw, 38, 19, bg); ctx.font = font(22, 600); ctx.fillStyle = fg; ctx.textBaseline = 'middle'; ctx.fillText(change, right - bw + 16, P.y + 20); }
         return bw;
       };
-      P.scheme = (e, tx, maxW) => {
+      P.scheme = (e, tx, maxW, withRest = true) => {
+        const warm = warmupLine(e), wr = withRest ? workRest(e) : 0;
+        const head = (label, sec) => {
+          if (d) {
+            ctx.textBaseline = 'top'; ctx.font = font(19, 700); ctx.fillStyle = C.muted; ctx.fillText(label, tx, P.y + 3);
+            if (sec) { const lw = ctx.measureText(label).width; ctx.font = font(22, 500); ctx.fillStyle = C.text2; ctx.fillText(` · отдых ${fmtRest(sec)}`, tx + lw, P.y); }
+          }
+          P.y += 32;
+        };
+        if (warm) { head('РАЗМИНКА', WARMUP_SET_REST); P.T(warm, 25, 500, C.text2, tx, maxW); P.y += 8; }
+        if (warm || wr) head('РАБОЧИЕ', wr);
         groupSets(workSets(e)).forEach((g, gi) => {
           const big = gi === 0;
           const main = `${big ? '' : '+ '}${g.n} × ${g.reps}`, unit = ` ${unitLabel(e.unit)} · `, wt = fmtW(g.weight);
@@ -1576,28 +1596,18 @@ function planImageBlob(plan) {
           P.y += big ? 48 : 36;
         });
       };
-      // Шаги «что делать → что дальше»; если не влезает в строку — «дальше» уходит на следующую.
-      P.steps = (it, tx, maxW) => {
-        stepLines(it).forEach(([what, then], k) => {
-          P.y += 4;
-          if (d) { ctx.strokeStyle = C.border; ctx.lineWidth = 1; ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(tx, P.y); ctx.lineTo(tx + maxW, P.y); ctx.stroke(); ctx.setLineDash([]); }
-          P.y += 8;
-          ctx.font = font(24, 500); const ww = ctx.measureText(what).width + 40;
-          ctx.font = font(22, 400); const tw = ctx.measureText(then).width;
-          if (d) {
-            ctx.textBaseline = 'top';
-            ctx.font = font(20, 500); ctx.fillStyle = C.muted; ctx.fillText(String(k + 1), tx, P.y + 3);
-            ctx.font = font(24, 500); ctx.fillStyle = C.text; ctx.fillText(what, tx + 30, P.y);
-          }
-          if (ww + tw + 20 <= maxW) {
-            if (d) { ctx.font = font(22, 400); ctx.fillStyle = C.muted; ctx.fillText(then, tx + maxW - tw, P.y + 2); }
-            P.y += 32;
-          } else {
-            P.y += 32;
-            if (d) { ctx.font = font(22, 400); ctx.fillStyle = C.muted; ctx.fillText(then, tx + maxW - tw, P.y); }
-            P.y += 30;
-          }
-        });
+      // Плашка «Отдых N мин» после последнего подхода/круга.
+      P.rest = (it, tx, maxW) => {
+        const sec = restAfter(it);
+        if (!sec) return;
+        P.y += 12;
+        if (d) {
+          roundRect(tx, P.y, maxW, 48, 12, '#efefec');
+          ctx.textBaseline = 'middle'; ctx.font = font(24, 500); ctx.fillStyle = C.text2; const lbl = '⏸ Отдых ';
+          ctx.fillText(lbl, tx + 16, P.y + 25); const lw = ctx.measureText(lbl).width;
+          ctx.font = font(24, 700); ctx.fillStyle = C.text; ctx.fillText(fmtRest(sec), tx + 16 + lw, P.y + 25);
+        }
+        P.y += 48;
       };
       P.meta = (str, tx) => {
         if (!str) return;
@@ -1625,8 +1635,8 @@ function planImageBlob(plan) {
           P.T(ex.name, 34, 700, C.text, x, w - bw - 12, 1.25); P.y += 4;
           P.T(when + (ex.rpe ? `  ·  RPE ${fmtRpe(ex.rpe)}` : ''), 23, 600, C.accent, x, w); P.y += 8;
           P.scheme(ex, x, w);
-          P.steps(it, x, w);
           if (ex.notes) { P.y += 8; P.T(ex.notes, 24, 400, C.text2, x, w, 1.4); }
+          P.rest(it, x, w);
           return P.y + pad;
         }
         const bw = P.badge(ex.change, right);
@@ -1640,7 +1650,7 @@ function planImageBlob(plan) {
             const Q = pen(dd, sy + 18);
             const pbw = Q.badge(part.change, x + w - 18);
             Q.T(part.name, 29, 700, C.text, px, pw - pbw - 10, 1.25); Q.y += 6;
-            Q.scheme({ ...part, sets: ex.sets }, px, pw);
+            Q.scheme({ ...part, sets: ex.sets }, px, pw, false);
             Q.meta(part.rpe ? `RPE ${fmtRpe(part.rpe)}` : '', px);
             if (part.notes) { Q.y += 4; Q.T(part.notes, 23, 400, C.text2, px, pw, 1.4); }
             return Q.y + 18;
@@ -1656,8 +1666,8 @@ function planImageBlob(plan) {
           }
           P.y = end;
         });
-        P.y += 6; P.steps(it, x, w);
         if (ex.notes) { P.y += 8; P.T(ex.notes, 24, 400, C.text2, x, w, 1.4); }
+        P.rest(it, x, w);
         return P.y + pad;
       };
       const h = card(false) - y0;
