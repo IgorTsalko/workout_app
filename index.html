@@ -131,6 +131,14 @@ label.f > input, label.f > textarea, label.f > select { margin-top: 4px; }
 .ex-name { font-weight: 600; font-size: 16px; flex: 1 1 200px; }
 .ex-scheme { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; margin: 2px 0; }
 .ex-scheme .unit { font-size: 14px; font-weight: 500; color: var(--text-2); }
+.badge.time { background: none; border: 1px solid var(--border); color: var(--text-2); margin-left: 6px; }
+.ex-num.stage { background: var(--surface-2); font-size: 15px; }
+.grp { margin-top: 6px; }
+.grp-h { font-size: 11.5px; font-weight: 600; letter-spacing: .4px; text-transform: uppercase; color: var(--muted); }
+.grp-h .rest { text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--text-2); }
+.grp-warm { font-size: 14px; color: var(--text-2); margin-top: 1px; }
+.rest-after { margin-top: 8px; padding: 6px 10px; border-radius: 8px; background: var(--surface-2); font-size: 13px; color: var(--text-2); }
+.rest-after b { color: var(--text); }
 .ss-head { font-size: 13px; color: var(--text-2); margin: 2px 0 4px; }
 .ss-part { display: grid; grid-template-columns: 28px 1fr; gap: 8px; background: var(--surface-2); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 8px 10px; margin-top: 6px; }
 .ss-label { width: 26px; height: 26px; border-radius: 6px; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; font-weight: 700; font-size: 13px; }
@@ -400,26 +408,83 @@ const warmupSets = (ex) => Array.isArray(ex.sets_detail) ? ex.sets_detail.filter
 // Суперсет — один пункт плана из нескольких частей (А, Б…), выполняемых подряд без отдыха.
 const SS_LABELS = ['А', 'Б', 'В', 'Г'];
 const isSuperset = (ex) => Array.isArray(ex.parts) && ex.parts.length > 0;
-const supersetHead = (ex) => `${ex.sets || 1} ${plural(ex.sets || 1, 'круг', 'круга', 'кругов')}: ${ex.parts.map((_, j) => SS_LABELS[j]).join(' → ')} без отдыха${ex.rest_sec ? `, затем отдых ${fmtRest(ex.rest_sec)}` : ''}`;
+const supersetHead = (ex) => `${ex.sets || 1} ${plural(ex.sets || 1, 'круг', 'круга', 'кругов')}: ${ex.parts.map((_, j) => SS_LABELS[j]).join(' → ')} без отдыха${ex.rest_sec ? `, отдых ${fmtRest(ex.rest_sec)} между кругами` : ''}`;
 function plural(n, one, few, many) { const m10 = n % 10, m100 = n % 100; return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many; }
+// Разминка и заминка — отдельные пункты плана с длительностью (kind: warmup / cooldown).
+const isStage = (ex) => ex.kind === 'warmup' || ex.kind === 'cooldown';
+const WARMUP_SET_REST = 60;   // отдых после разминочного подхода, сек
+const SS_SWITCH = 15;         // переход между частями суперсета, сек
+// Оценка времени одного подхода: ~3 сек на повтор + подготовка.
+const workSec = (e, reps) => e.unit === 'sec' ? (firstNum(reps) || 30) + 10 : Math.min(90, Math.max(30, (firstNum(reps) || 10) * 3 + 10));
+const fmtMin = (sec) => Math.round(sec / 60);
+// Пункты плана по порядку с таймингом: start/end в секундах от начала тренировки и шаги (подходы/круги) с отдыхом.
+function planItems(plan) {
+  const list = [...(plan.exercises || [])];
+  if (!list.some(e => e.kind === 'warmup') && plan.warmup) list.unshift({ kind: 'warmup', name: 'Разминка', duration_min: 5, notes: plan.warmup });
+  if (!list.some(e => e.kind === 'cooldown') && plan.cooldown) list.push({ kind: 'cooldown', name: 'Заминка', duration_min: 5, notes: plan.cooldown });
+  const transition = plan.rest_between_exercises_sec ?? 180;
+  const strength = list.map((e, i) => isStage(e) ? -1 : i).filter(i => i >= 0);
+  const lastStrength = strength[strength.length - 1];
+  let t = 0, n = 0;
+  const items = list.map((ex, i) => {
+    const start = t;
+    if (isStage(ex)) { t += (num(ex.duration_min) || 5) * 60; return { ex, num: null, start, end: t, steps: [] }; }
+    n++;
+    const after = i === lastStrength ? 0 : transition;
+    const steps = [];
+    let end = t;
+    if (isSuperset(ex)) {
+      const rounds = ex.sets || 1;
+      const work = ex.parts.reduce((sum, p) => sum + workSec(p, p.reps), 0) + SS_SWITCH * (ex.parts.length - 1);
+      for (let r = 0; r < rounds; r++) {
+        const last = r === rounds - 1, rest = last ? after : (ex.rest_sec ?? 90);
+        t += work; end = t; steps.push({ round: r + 1, rest, last }); t += rest;
+      }
+    } else {
+      const sets = [...warmupSets(ex).map(x => ({ ...x, warmup: true })), ...workSets(ex)];
+      sets.forEach((x, k) => {
+        const last = k === sets.length - 1, rest = last ? after : x.warmup ? WARMUP_SET_REST : (ex.rest_sec ?? 90);
+        t += workSec(ex, x.reps); end = t; steps.push({ set: x, rest, last }); t += rest;
+      });
+    }
+    return { ex, num: n, start, end, steps };
+  });
+  items.forEach((it, i) => { it.next = items[i + 1] || null; });
+  return { items, total: t };
+}
+const loadText = (e, x) => e.unit === 'sec' ? `${x.reps} сек${x.weight ? ` · ${+x.weight} кг` : ''}`
+  : (x.weight === null || x.weight === undefined || x.weight === '') ? `? кг × ${x.reps}` : Number(x.weight) === 0 ? `${x.reps} повт.` : `${+x.weight} кг × ${x.reps}`;
+// Отдых после последнего подхода/круга пункта (0 — дальше заминка или конец).
+const restAfter = (it) => it.steps.length ? it.steps[it.steps.length - 1].rest : 0;
+// Разминочные подходы одной строкой: «20×15 · 45×6 · 62.5×3».
+const warmupLine = (ex) => warmupSets(ex).map(w => {
+  const wt = w.weight === null || w.weight === undefined || w.weight === '' ? 'лёгкий вес × ' : Number(w.weight) === 0 ? 'б/в × ' : `${+w.weight}×`;
+  return `${wt}${w.reps}${ex.unit === 'sec' ? ' сек' : ''}`;
+}).join(' · ');
+// Отдых между рабочими подходами — только если рабочих подходов больше одного.
+const workRest = (ex) => ex.rest_sec && workSets(ex).length > 1 ? ex.rest_sec : 0;
+
 // Плоский список упражнений плана: части суперсетов разворачиваются с меткой «5А», «5Б».
 function flatExercises(plan) {
   const out = [];
-  (plan.exercises || []).forEach((ex, i) => {
+  (plan.exercises || []).filter(ex => !isStage(ex)).forEach((ex, i) => {
     if (isSuperset(ex)) ex.parts.forEach((p, j) => out.push({ ex: { ...p, sets: ex.sets, rest_sec: p.rest_sec ?? ex.rest_sec }, tag: `${i + 1}${SS_LABELS[j]}`, ss: ex }));
     else out.push({ ex, tag: String(i + 1), ss: null });
   });
   return out;
 }
 
-function schemeHtml(ex) {
+// Схема подходов: разминочные одной строкой и рабочие крупно, у каждой группы — отдых между подходами.
+function schemeHtml(ex, withRest = true) {
   const groups = groupSets(workSets(ex));
   const [main, ...rest] = groups.length ? groups : [{ n: ex.sets || 1, reps: ex.reps, weight: ex.weight }];
-  const warm = warmupSets(ex);
-  return `${warm.length ? `<div class="small muted">Разминочные: ${warm.map(w => `${warmW(w.weight)}×${esc(w.reps)}`).join(' · ')}</div>` : ''}
+  const warm = warmupLine(ex), wr = withRest ? workRest(ex) : 0;
+  const restTag = (sec) => sec ? ` <span class="rest">· отдых ${fmtRest(sec)}</span>` : '';
+  return `${warm ? `<div class="grp"><div class="grp-h">Разминка${restTag(WARMUP_SET_REST)}</div><div class="grp-warm">${esc(warm)}</div></div>` : ''}
+    <div class="grp">${warm || wr ? `<div class="grp-h">Рабочие${restTag(wr)}</div>` : ''}
     <div class="ex-scheme">${esc(main.n)} × ${esc(main.reps ?? '—')} <span class="unit">${unitLabel(ex.unit)}</span>
     <span class="unit">·</span> ${esc(fmtW(main.weight))}</div>
-    ${rest.map(g => `<div class="small"><b>+ ${g.n} × ${esc(g.reps)}</b> · ${esc(fmtW(g.weight))}</div>`).join('')}`;
+    ${rest.map(g => `<div class="small"><b>+ ${g.n} × ${esc(g.reps)}</b> · ${esc(fmtW(g.weight))}</div>`).join('')}</div>`;
 }
 function changeBadge(change) {
   if (!change) return '';
@@ -458,11 +523,13 @@ function viewToday() {
     return html;
   }
   const used = state.history.some(h => h.planId === plan.id);
+  const timeline = planItems(plan);
+  const overLimit = fmtMin(timeline.total) > PROFILE.sessionMaxMinutes;
   html += `<h2>${esc(plan.title || 'Тренировка')}</h2>
     <div class="row small" style="margin:-6px 0 12px">
       ${plan.date ? `<span class="badge accent">📅 ${fmtDate(plan.date)}</span>` : ''}
       ${plan.focus ? `<span class="badge">${esc(plan.focus)}</span>` : ''}
-      ${plan.duration_min ? `<span class="badge">⏱ ~${esc(plan.duration_min)} мин</span>` : ''}
+      <span class="badge ${overLimit ? 'warn' : ''}">⏱ ~${fmtMin(timeline.total)} мин${overLimit ? ` — больше лимита ${PROFILE.sessionMaxMinutes}` : ''}</span>
       ${plan.rest_between_exercises_sec ? `<span class="badge">↻ ${esc(Math.round(plan.rest_between_exercises_sec / 60 * 10) / 10)} мин между упражнениями</span>` : ''}
       ${used ? '<span class="badge good">✓ уже записана</span>' : ''}
     </div>`;
@@ -483,44 +550,57 @@ function viewToday() {
         ${w.reason ? `<div class="small" style="margin-top:2px">${esc(w.reason)}</div>` : ''}</div>`;
     }).join('')}</div>`;
   }
-  if (plan.warmup) html += `<div class="card soft"><h3>🔥 Разминка</h3><div>${esc(plan.warmup)}</div></div>`;
-  html += `<div class="card"><h3>Упражнения</h3>`;
-  (plan.exercises || []).forEach((ex, i) => {
+  html += `<div class="card"><h3>Ход тренировки</h3>`;
+  for (const it of timeline.items) {
+    const ex = it.ex;
+    const time = `<span class="badge time">⏱ ${fmtMin(it.start)}–${fmtMin(it.end)} мин</span>`;
+    const after = restAfter(it);
+    const restHtml = after ? `<div class="rest-after">⏸ Отдых <b>${fmtRest(after)}</b></div>` : '';
+    if (isStage(ex)) {
+      html += `<div class="ex-card">
+        <div class="ex-num stage">${ex.kind === 'warmup' ? '🔥' : '🧘'}</div>
+        <div>
+          <div class="row"><span class="ex-name grow">${esc(ex.name || (ex.kind === 'warmup' ? 'Разминка' : 'Заминка'))}</span>${time}</div>
+          <div class="small muted">${esc(num(ex.duration_min) || 5)} мин</div>
+          ${ex.notes ? `<div class="small" style="margin-top:4px">${esc(ex.notes)}</div>` : ''}
+        </div>
+      </div>`;
+      continue;
+    }
     if (isSuperset(ex)) {
       html += `<div class="ex-card">
-        <div class="ex-num">${i + 1}</div>
+        <div class="ex-num">${it.num}</div>
         <div>
-          <div class="row"><span class="ex-name grow">Суперсет${ex.name ? `: ${esc(ex.name)}` : ''}</span>${changeBadge(ex.change)}</div>
+          <div class="row"><span class="ex-name grow">Суперсет${ex.name ? `: ${esc(ex.name)}` : ''}</span>${changeBadge(ex.change)}${time}</div>
           <div class="ss-head">↻ ${esc(supersetHead(ex))}</div>
           ${ex.parts.map((p, j) => `${j ? '<div class="ss-link">↓ сразу, без отдыха</div>' : ''}
           <div class="ss-part">
             <div class="ss-label">${SS_LABELS[j]}</div>
             <div>
               <div class="row"><span class="ex-name grow">${esc(p.name)}</span>${changeBadge(p.change)}</div>
-              ${schemeHtml({ ...p, sets: ex.sets })}
+              ${schemeHtml({ ...p, sets: ex.sets }, false)}
               ${p.rpe ? `<div class="small muted">Целевое RPE ${fmtRpe(p.rpe)}</div>` : ''}
               ${p.notes ? `<div class="small" style="margin-top:4px">${esc(p.notes)}</div>` : ''}
             </div>
           </div>`).join('')}
-          ${ex.rest_sec ? `<div class="ss-link">↻ отдых ${fmtRest(ex.rest_sec)} → следующий круг</div>` : ''}
           ${ex.notes ? `<div class="small" style="margin-top:6px">${esc(ex.notes)}</div>` : ''}
+          ${restHtml}
         </div>
       </div>`;
-      return;
+      continue;
     }
     html += `<div class="ex-card">
-      <div class="ex-num">${i + 1}</div>
+      <div class="ex-num">${it.num}</div>
       <div>
-        <div class="row"><span class="ex-name grow">${esc(ex.name)}</span>${changeBadge(ex.change)}</div>
+        <div class="row"><span class="ex-name grow">${esc(ex.name)}</span>${changeBadge(ex.change)}${time}</div>
         ${schemeHtml(ex)}
-        <div class="set-dots">${'<span></span>'.repeat(Math.min(workSets(ex).length, 10))}</div>
-        <div class="small muted">${[ex.rest_sec ? `Отдых ${fmtRest(ex.rest_sec)}` : '', ex.rpe ? `Целевое RPE ${fmtRpe(ex.rpe)}` : ''].filter(Boolean).join(' · ')}</div>
-        ${ex.notes ? `<div class="small" style="margin-top:4px">${esc(ex.notes)}</div>` : ''}
+        ${ex.rpe ? `<div class="small muted">Целевое RPE ${fmtRpe(ex.rpe)}</div>` : ''}
+        ${ex.notes ? `<div class="small" style="margin-top:6px">${esc(ex.notes)}</div>` : ''}
+        ${restHtml}
       </div>
     </div>`;
-  });
+  }
   html += `</div>`;
-  if (plan.cooldown) html += `<div class="card soft"><h3>🧘 Заминка</h3><div>${esc(plan.cooldown)}</div></div>`;
   if (plan.notes) html += `<div class="card soft"><h3>📝 Заметки тренера</h3><div>${esc(plan.notes)}</div></div>`;
   html += `<div class="row no-print" style="margin-top:6px">
     <button class="btn primary" data-act="start-log">Записать результат</button>
@@ -567,7 +647,7 @@ function newDraftFromPlan(status = 'done') {
       })),
       notes: ''
     })) : [],
-    wellbeing: null, effort: null, duration: plan && plan.duration_min ? plan.duration_min : '',
+    wellbeing: null, effort: null, duration: plan ? fmtMin(planItems(plan).total) : '',
     sleep: '', bodyweight: '', notes: '', extras: '', wishes: '', insist: false, reason: ''
   };
 }
@@ -918,6 +998,7 @@ function niceTicks(lo, hi, n) {
    Вкладка «Claude ⇄» — экспорт prompt и импорт ответа
    ===================================================================== */
 function planLine(ex) {
+  if (isStage(ex)) return `${num(ex.duration_min) || 5} мин${ex.notes ? `: ${ex.notes}` : ''}`;
   if (isSuperset(ex)) return `${supersetHead(ex)}; ${ex.parts.map((p, j) => `${SS_LABELS[j]}) ${p.name}: ${planLine({ ...p, sets: ex.sets, rest_sec: null })}`).join('; ')}`;
   const parts = [planText(ex)];
   if (ex.rest_sec) parts.push(`отдых ${fmtRest(ex.rest_sec)}`);
@@ -951,7 +1032,7 @@ function buildPrompt(count) {
 
   if (plan) {
     const used = state.history.some(h => h.planId === plan.id);
-    L.push(`## Последний выданный план (${plan.date || 'без даты'}${used ? '' : ', ещё не выполнен'}): «${plan.title || ''}»`);
+    L.push(`## Последний выданный план (${plan.date || 'без даты'}${used ? '' : ', ещё не выполнен'}): «${plan.title || ''}», ~${fmtMin(planItems(plan).total)} мин по расчёту приложения`);
     (plan.exercises || []).forEach(ex => {
       if (!isSuperset(ex)) return L.push(`- ${ex.name}: ${planLine(ex)}`);
       L.push(`- Суперсет${ex.name ? ` «${ex.name}»` : ''} (${supersetHead(ex)}):`);
@@ -1069,10 +1150,9 @@ function buildPrompt(count) {
       date: 'YYYY-MM-DD',
       title: 'Название, например «Вторник — грудь»',
       focus: 'Фокус тренировки',
-      duration_min: 65,
       rest_between_exercises_sec: 180,
-      warmup: 'Разминка одной-двумя строками',
       exercises: [
+        { kind: 'warmup', name: 'Разминка', duration_min: 5, notes: 'Что делать' },
         { name: 'Название упражнения', sets: 3, reps: '8-10', unit: 'reps', weight: 22, rest_sec: 120, rpe: 90, change: '+1 кг', notes: 'Подсказки по технике' },
         { name: 'Упражнение с разными подходами', sets: 4, reps: 6, unit: 'reps', weight: 77.5, rest_sec: 150, rpe: 90, change: '+2.5 кг',
           sets_detail: [{ weight: 40, reps: 10, warmup: true }, { weight: 77.5, reps: 6 }, { weight: 77.5, reps: 6 }, { weight: 77.5, reps: 6 }, { weight: 65, reps: 10 }],
@@ -1082,14 +1162,14 @@ function buildPrompt(count) {
             { name: 'Первое упражнение суперсета', reps: '14-16', unit: 'reps', weight: 11, rpe: 90, change: '', notes: '…' },
             { name: 'Второе упражнение суперсета', reps: '12-15', unit: 'reps', weight: 24, rpe: 90, change: '', notes: '…' }
           ],
-          notes: 'Общие подсказки по суперсету' }
+          notes: 'Общие подсказки по суперсету' },
+        { kind: 'cooldown', name: 'Заминка', duration_min: 5, notes: 'Что делать' }
       ],
-      cooldown: 'Заминка',
       notes: 'Прочие замечания'
     }
   }, null, 2));
   L.push('```');
-  L.push(`Правила для JSON: weight — число в кг (0 = собственный вес, null = вес подобрать на месте; для гантелей — вес одной гантели); reps — число или строка-диапазон ("8-10"); unit — "reps" или "sec"; rpe — целевая тяжесть в процентах (50–100); rest_sec — отдых между подходами; суперсет — отдельный пункт с type "superset": rounds — число кругов, rest_sec — отдых после круга, parts — упражнения, которые делаются подряд без отдыха (в истории они помечены как «суперсет 5А/5Б»); sets_detail — необязательный полный список подходов, когда веса/повторы различаются или есть разминочные подходы (warmup: true), тогда sets = число рабочих подходов; change — коротко, что изменилось относительно прошлого раза ("+2.5 кг", "+1 повтор", "−1 подход", "новое", "без изменений"). Используй те же названия упражнений, что и в истории, чтобы я мог отслеживать прогресс. wishes_review — по одному пункту на каждое моё пожелание (пустой массив, если пожеланий нет); decision — строго одно из четырёх значений.`);
+  L.push(`Правила для JSON: weight — число в кг (0 = собственный вес, null = вес подобрать на месте; для гантелей — вес одной гантели); reps — число или строка-диапазон ("8-10"); unit — "reps" или "sec"; rpe — целевая тяжесть в процентах (50–100); rest_sec — отдых между подходами; суперсет — отдельный пункт с type "superset": rounds — число кругов, rest_sec — отдых после круга, parts — упражнения, которые делаются подряд без отдыха (в истории они помечены как «суперсет 5А/5Б»); sets_detail — необязательный полный список подходов, когда веса/повторы различаются или есть разминочные подходы (warmup: true), тогда sets = число рабочих подходов; change — коротко, что изменилось относительно прошлого раза ("+2.5 кг", "+1 повтор", "−1 подход", "новое", "без изменений"). Используй те же названия упражнений, что и в истории, чтобы я мог отслеживать прогресс. Разминка и заминка — первый и последний пункты exercises с kind "warmup"/"cooldown" и duration_min. Время тренировки приложение считает само: подход ≈ 3 сек на повтор + 10 сек (30–90 сек), разминочный подход + 1 мин отдыха, rest_sec между рабочими подходами, rest_between_exercises_sec между упражнениями, переход между частями суперсета 15 сек, плюс разминка и заминка. Подбирай подходы и отдых так, чтобы по этому расчёту тренировка укладывалась в лимит. wishes_review — по одному пункту на каждое моё пожелание (пустой массив, если пожеланий нет); decision — строго одно из четырёх значений.`);
   return L.join('\n');
 }
 
@@ -1157,10 +1237,13 @@ function normalizePlan(o) {
     recommendation: o.recommendation ? String(o.recommendation) : '',
     warnings: Array.isArray(o.warnings) ? o.warnings.filter(Boolean).map(String) : (o.warnings ? [String(o.warnings)] : []),
     wishes_review: Array.isArray(o.wishes_review) ? o.wishes_review.filter(w => w && w.wish).map(w => ({ wish: String(w.wish), decision: String(w.decision || ''), reason: w.reason ? String(w.reason) : '' })) : [],
-    warmup: nw.warmup ? String(nw.warmup) : '',
-    cooldown: nw.cooldown ? String(nw.cooldown) : '',
     notes: nw.notes ? String(nw.notes) : '',
-    exercises: nw.exercises.map(function normEx(ex) {
+    exercises: [
+      ...(nw.warmup && !nw.exercises.some(e => e.kind === 'warmup') ? [{ kind: 'warmup', name: 'Разминка', duration_min: 5, notes: String(nw.warmup) }] : []),
+      ...nw.exercises.map(function normEx(ex) {
+      if (ex.kind === 'warmup' || ex.kind === 'cooldown') {
+        return { kind: ex.kind, name: String(ex.name || (ex.kind === 'warmup' ? 'Разминка' : 'Заминка')), duration_min: num(ex.duration_min) || 5, notes: ex.notes ? String(ex.notes) : '' };
+      }
       const parts = Array.isArray(ex.parts) ? ex.parts : Array.isArray(ex.superset) ? ex.superset : null;
       if (parts && parts.length) {
         const rounds = Math.max(1, parseInt(ex.rounds ?? ex.sets, 10) || 1);
@@ -1189,7 +1272,9 @@ function normalizePlan(o) {
         notes: ex.notes ? String(ex.notes) : '',
         ...(detail ? { sets_detail: detail } : {})
       };
-    })
+    }),
+      ...(nw.cooldown && !nw.exercises.some(e => e.kind === 'cooldown') ? [{ kind: 'cooldown', name: 'Заминка', duration_min: 5, notes: String(nw.cooldown) }] : [])
+    ]
   };
 }
 function importPlan() {
@@ -1272,7 +1357,7 @@ function viewSettings() {
    Стартовые данные: текущая программа (как две записи) + план первой тренировки
    ===================================================================== */
 const SEED_PLAN_CREATED = '2026-10-03T12:00:00.000Z';
-const SEED_REV = 2;
+const SEED_REV = 3;
 // Если стартовый план ещё не выполнялся, а в коде он обновился — подменяем его новой версией.
 function migrateSeedPlan() {
   const i = state.plans.length - 1, p = state.plans[i];
@@ -1324,13 +1409,12 @@ function buildSeed() {
     duration_min: 70, rest_between_exercises_sec: 180,
     summary: 'Стартовая точка: около 6 месяцев по схеме «вт — грудь, пт — спина», сила и вес тела стоят на месте. Причины видны в самой программе. Каждая крупная мышца получает нагрузку раз в неделю. Ног нет совсем, а это самая крупная мышечная группа. Почти все подходы на 90–100% без схемы прогрессии. Пятница (≈26 подходов) не укладывается в 70 минут.',
     recommendation: 'Переходим на две тренировки «верх с акцентом + ноги без осевой нагрузки» и двойную прогрессию: работаем в диапазоне повторов, а когда все рабочие подходы доходят до верхней границы, прибавляем вес. В жиме лёжа меняем стимул: 77.5 кг на 6 повторов плюс облегчённый подход на 10. Вес тела не растёт, значит не хватает калорий: добавьте ~300–400 ккал в день и ~1.8–2 г белка на кг веса (140–150 г). Взвешивайтесь утром натощак и записывайте вес в конце тренировки.',
-    warmup: '5 мин велотренажёр или эллипс, суставная разминка плеч и локтей, затем гиперэкстензия (упражнение 1).',
     exercises: [
-      { name: 'Гиперэкстензия', sets: 2, reps: 20, unit: 'reps', weight: 0, rest_sec: 60, rpe: 60, change: 'без изменений',
-        notes: 'Без веса, медленно, без переразгибания в верхней точке. Если поясница отзывается болью, уменьшите амплитуду.' },
+      { kind: 'warmup', name: 'Разминка', duration_min: 8,
+        notes: '4 мин велотренажёр или эллипс в спокойном темпе. Затем гиперэкстензия без веса 2×15–20 (медленно, без переразгибания вверху; если поясница отзывается — уменьшите амплитуду) и суставная разминка плеч и локтей.' },
       { name: 'Жим штанги лёжа', sets: 4, reps: 6, unit: 'reps', weight: 77.5, rest_sec: 150, rpe: 90, change: '+2.5 кг, 6 повт.',
         sets_detail: [
-          { weight: 20, reps: 15, warmup: true }, { weight: 40, reps: 8, warmup: true }, { weight: 55, reps: 5, warmup: true }, { weight: 65, reps: 3, warmup: true },
+          { weight: 20, reps: 15, warmup: true }, { weight: 45, reps: 6, warmup: true }, { weight: 62.5, reps: 3, warmup: true },
           { weight: 77.5, reps: 6 }, { weight: 77.5, reps: 6 }, { weight: 77.5, reps: 6 }, { weight: 65, reps: 10 }
         ],
         notes: 'Лопатки сведены, ноги упираются в пол, таз не отрывать от скамьи. Последний подход на 65 кг облегчённый, на 10–12 повторов. Прогрессия: когда получится 3×8 с 77.5 кг, переходите на 80 кг и снова 3×6.' },
@@ -1347,13 +1431,18 @@ function buildSeed() {
             notes: 'Спина прямая, пресс напряжён, колени чуть согнуты. Плечи строго вверх к ушам, пауза 2 сек, медленно вниз, без вращения плечами. Вес одной гантели подберите на месте (ориентир 22–26 кг). Когда получится 3×15, прибавляйте 2 кг.' }
         ],
         notes: 'Один круг: разведения, сразу берёте тяжёлые гантели и делаете шраги, затем отдых 1.5 мин. Шраги стоя дают осевую нагрузку на позвоночник: не гонитесь за весом, держите корпус жёстко. Если поясница отзовётся, в следующий раз делайте шраги сидя или с упором грудью в скамью.' },
-      { name: 'Разгибания рук на верхнем блоке', sets: 3, reps: '10-12', unit: 'reps', weight: null, rest_sec: 90, rpe: 90, change: 'новое',
-        notes: 'Канат или прямая рукоять, локти прижаты к корпусу. Подберите вес так, чтобы 12-й повтор был тяжёлым. Сейчас трицепс работает только в жимах, а это 2/3 объёма руки.' },
-      { name: 'Подъём согнутых ног на брусьях', sets: 3, reps: '15-20', unit: 'reps', weight: 0, rest_sec: 90, rpe: 90, change: 'вместо 100 повт. — 3×15-20',
-        notes: 'Медленно, пауза 1 секунда вверху, подкручивайте таз к груди, без раскачки. Сотня повторов до отказа больше не даёт роста. Усложняйте упражнение: медленнее, потом с гантелью между стоп.' }
+      { type: 'superset', name: 'трицепс + пресс', sets: 3, rest_sec: 90, change: '',
+        parts: [
+          { name: 'Разгибания рук на верхнем блоке', sets: 3, reps: '10-12', unit: 'reps', weight: null, rest_sec: null, rpe: 90, change: 'новое',
+            notes: 'Канат или прямая рукоять, локти прижаты к корпусу. Подберите вес так, чтобы 12-й повтор был тяжёлым. Сейчас трицепс работает только в жимах, а это 2/3 объёма руки.' },
+          { name: 'Подъём согнутых ног на брусьях', sets: 3, reps: '15-20', unit: 'reps', weight: 0, rest_sec: null, rpe: 90, change: 'вместо 100 повт. — 3×15-20',
+            notes: 'Медленно, пауза 1 секунда вверху, подкручивайте таз к груди, без раскачки. Сотня повторов до отказа больше не даёт роста: усложняйте упражнение — медленнее, потом с гантелью между стоп.' }
+        ],
+        notes: 'Трицепс и пресс не мешают друг другу, поэтому их удобно делать кругом и экономить время.' },
+      { kind: 'cooldown', name: 'Заминка', duration_min: 5,
+        notes: 'Вис на турнике 2×20–30 сек (разгрузка позвоночника), растяжка грудных и квадрицепсов.' }
     ],
-    cooldown: 'Вис на турнике 2×20–30 сек (разгрузка позвоночника), растяжка грудных и квадрицепсов 3–5 минут.',
-    notes: 'Жим гантелей сидя заменён шрагами: в жиме трапеция работает лишь как помощник, а шраги нагружают её напрямую. Передняя дельта и так много работает в двух жимах. По времени выходит ≈70 мин при отдыхе 3 мин между упражнениями. Если не укладываетесь, сократите отдых в упражнениях 5–7 до 1 минуты. Пятница (ориентир, точный план — после этой тренировки): подтягивания, тяга верхнего блока, тяга нижнего блока к поясу (средняя часть трапеции), сгибания ног в тренажёре, жим в хаммере или отжимания на брусьях, разведения в стороны + шраги, бицепс, пресс. Подходов будет меньше, чтобы уложиться в 70 минут.'
+    notes: 'Жим гантелей сидя заменён шрагами: в жиме трапеция работает лишь как помощник, а шраги нагружают её напрямую. Передняя дельта и так много работает в двух жимах. Гиперэкстензия перенесена в разминку, а трицепс и пресс объединены в суперсет: так тренировка укладывается в 70 минут при отдыхе 3 мин между упражнениями. Время каждого упражнения указано в карточке; если отстаёте от графика, сократите отдых в суперсетах до 1 минуты. Пятница (ориентир, точный план — после этой тренировки): подтягивания, тяга верхнего блока, тяга нижнего блока к поясу (средняя часть трапеции), сгибания ног в тренажёре, жим в хаммере или отжимания на брусьях, разведения в стороны + шраги, бицепс, пресс. Подходов будет меньше, чтобы уложиться в 70 минут.'
   };
   return { version: 2, plans: [plan], history };
 }
@@ -1366,48 +1455,47 @@ function canShareFiles() {
   try { return !!(navigator.canShare && navigator.canShare({ files: [new File([''], 'x.png', { type: 'image/png' })] })); }
   catch (e) { return false; }
 }
-function exTextLines(ex) {
-  const warm = warmupSets(ex);
-  const groups = groupSets(workSets(ex));
-  const lines = [];
-  if (warm.length) lines.push(`Разминка: ${warm.map(w => `${warmW(w.weight)}×${w.reps}`).join(' · ')}`);
-  groups.forEach(g => lines.push(`${g.n} × ${g.reps} ${unitLabel(ex.unit)} · ${fmtW(g.weight)}`));
-  return lines;
-}
 function planAsText(plan) {
+  const { items, total } = planItems(plan);
   const L = [`🏋️ ${plan.title || 'Тренировка'}${plan.date ? ` — ${fmtDate(plan.date)}` : ''}`];
-  const meta = [plan.focus, plan.duration_min ? `~${plan.duration_min} мин` : '', plan.rest_between_exercises_sec ? `${fmtRest(plan.rest_between_exercises_sec)} между упражнениями` : ''].filter(Boolean);
-  if (meta.length) L.push(meta.join(' · '));
+  L.push([plan.focus, `~${fmtMin(total)} мин`].filter(Boolean).join(' · '));
   if (plan.recommendation) L.push('', `💡 ${plan.recommendation}`);
   (plan.warnings || []).forEach((w, k) => { if (!k) L.push(''); L.push(`⚠ ${w}`); });
-  if (plan.warmup) L.push('', `🔥 Разминка: ${plan.warmup}`);
-  L.push('');
-  (plan.exercises || []).forEach((ex, i) => {
+  for (const it of items) {
+    const ex = it.ex, when = `[${fmtMin(it.start)}–${fmtMin(it.end)} мин]`;
+    L.push('');
+    if (isStage(ex)) {
+      L.push(`${ex.kind === 'warmup' ? '🔥' : '🧘'} ${ex.name || (ex.kind === 'warmup' ? 'Разминка' : 'Заминка')} ${when}`);
+      if (ex.notes) L.push(`   ${ex.notes}`);
+      continue;
+    }
     if (isSuperset(ex)) {
-      L.push(`${i + 1}. Суперсет${ex.name ? `: ${ex.name}` : ''}${ex.change ? ` [${ex.change}]` : ''}`);
-      L.push(`   ${supersetHead(ex)}`);
+      L.push(`${it.num}. Суперсет${ex.name ? `: ${ex.name}` : ''} ${when}${ex.change ? ` [${ex.change}]` : ''}`);
       ex.parts.forEach((p, j) => {
-        const g = groupSets(workSets({ ...p, sets: 1 }))[0] || { reps: p.reps, weight: p.weight };
-        L.push(`   ${SS_LABELS[j]}) ${p.name}${p.change ? ` [${p.change}]` : ''} — ${g.reps} ${unitLabel(p.unit)} · ${fmtW(g.weight)}${p.rpe ? ` · RPE ${fmtRpe(p.rpe)}` : ''}`);
+        L.push(`   ${SS_LABELS[j]}) ${p.name}${p.change ? ` [${p.change}]` : ''}${p.rpe ? ` · RPE ${fmtRpe(p.rpe)}` : ''}`);
         if (p.notes) L.push(`      ${p.notes}`);
       });
-      L.push(`   ${Array.from({ length: ex.sets || 1 }, (_, k) => `☐ круг ${k + 1}`).join('  ')}`);
-      if (ex.notes) L.push(`   ${ex.notes}`);
-      return;
+      L.push(`   ${'☐'.repeat(ex.sets || 1)} ${supersetHead(ex)}`);
+    } else {
+      L.push(`${it.num}. ${ex.name} ${when}${ex.change ? ` [${ex.change}]` : ''}${ex.rpe ? ` · RPE ${fmtRpe(ex.rpe)}` : ''}`);
     }
-    L.push(`${i + 1}. ${ex.name}${ex.change ? ` [${ex.change}]` : ''}`);
-    exTextLines(ex).forEach(l => L.push(`   ☐ ${l}`));
-    const meta2 = [ex.rest_sec ? `отдых ${fmtRest(ex.rest_sec)}` : '', ex.rpe ? `RPE ${fmtRpe(ex.rpe)}` : ''].filter(Boolean);
-    if (meta2.length) L.push(`   ${meta2.join(' · ')}`);
+    if (!isSuperset(ex)) {
+      // Чекбокс на каждый подход, одинаковые подряд подходы — в одной строке: «☐☐☐ 77.5 кг × 6».
+      const boxes = (g) => `${'☐'.repeat(g.n)} ${loadText(ex, g)}`;
+      if (warmupSets(ex).length) L.push(`   Разминка (отдых ${fmtRest(WARMUP_SET_REST)}): ${groupSets(warmupSets(ex)).map(boxes).join(', ')}`);
+      const wr = workRest(ex);
+      L.push(`   ${warmupSets(ex).length || wr ? `Рабочие${wr ? ` (отдых ${fmtRest(wr)})` : ''}: ` : ''}${groupSets(workSets(ex)).map(boxes).join(', ')}`);
+    }
     if (ex.notes) L.push(`   ${ex.notes}`);
-  });
-  if (plan.cooldown) L.push('', `🧘 Заминка: ${plan.cooldown}`);
+    if (restAfter(it)) L.push(`   ⏸ Отдых ${fmtRest(restAfter(it))}`);
+  }
   if (plan.notes) L.push('', `📝 ${plan.notes}`);
   return L.join('\n');
 }
 
 // Рисуем план на canvas вручную — без внешних библиотек, работает офлайн.
 function planImageBlob(plan) {
+  const timeline = planItems(plan);
   const W = 1080, PAD = 56, SCALE = 1;
   const C = { bg: '#f4f4f2', card: '#ffffff', border: '#dddcd7', text: '#0b0b0b', text2: '#52514e', muted: '#8a8984',
     accent: '#2a78d6', accentSoft: '#e3eefb', good: '#1f7a3a', goodSoft: '#e2f3e6', warn: '#9a6400', warnSoft: '#fbf0d9' };
@@ -1453,7 +1541,7 @@ function planImageBlob(plan) {
     // Заголовок
     text(plan.title || 'Тренировка', 54, 700, C.text, PAD, inner, 1.2);
     y += 8;
-    const meta = [plan.date ? fmtDate(plan.date) : '', plan.duration_min ? `~${plan.duration_min} мин` : '',
+    const meta = [plan.date ? fmtDate(plan.date) : '', `~${fmtMin(timeline.total)} мин`,
       plan.rest_between_exercises_sec ? `${fmtRest(plan.rest_between_exercises_sec)} между упражнениями` : ''].filter(Boolean).join('  ·  ');
     if (meta) text(meta, 28, 500, C.accent, PAD, inner);
     if (plan.focus) { y += 4; text(plan.focus, 26, 400, C.text2, PAD, inner); }
@@ -1471,7 +1559,6 @@ function planImageBlob(plan) {
     };
     if (plan.recommendation) callout('Рекомендация', plan.recommendation, C.accentSoft, C.accent);
     if (plan.warnings && plan.warnings.length) callout('⚠ Важно', plan.warnings.map(w => `• ${w}`).join('\n'), C.warnSoft, C.warn);
-    if (plan.warmup) callout('Разминка', plan.warmup, '#efefec', C.muted);
     // «Перо»: рисует (d=true) или только меряет (d=false) блоки, начиная с высоты startY.
     const pen = (d, startY) => {
       const P = { y: startY };
@@ -1486,9 +1573,17 @@ function planImageBlob(plan) {
         if (d) { const [bg, fg] = badgeColors(change); roundRect(right - bw, P.y, bw, 38, 19, bg); ctx.font = font(22, 600); ctx.fillStyle = fg; ctx.textBaseline = 'middle'; ctx.fillText(change, right - bw + 16, P.y + 20); }
         return bw;
       };
-      P.scheme = (e, tx, maxW) => {
-        const warm = warmupSets(e);
-        if (warm.length) { P.T(`Разминка: ${warm.map(s => `${warmW(s.weight)}×${s.reps}`).join(' · ')}`, 23, 400, C.muted, tx, maxW); P.y += 4; }
+      P.scheme = (e, tx, maxW, withRest = true) => {
+        const warm = warmupLine(e), wr = withRest ? workRest(e) : 0;
+        const head = (label, sec) => {
+          if (d) {
+            ctx.textBaseline = 'top'; ctx.font = font(19, 700); ctx.fillStyle = C.muted; ctx.fillText(label, tx, P.y + 3);
+            if (sec) { const lw = ctx.measureText(label).width; ctx.font = font(22, 500); ctx.fillStyle = C.text2; ctx.fillText(` · отдых ${fmtRest(sec)}`, tx + lw, P.y); }
+          }
+          P.y += 32;
+        };
+        if (warm) { head('РАЗМИНКА', WARMUP_SET_REST); P.T(warm, 25, 500, C.text2, tx, maxW); P.y += 8; }
+        if (warm || wr) head('РАБОЧИЕ', wr);
         groupSets(workSets(e)).forEach((g, gi) => {
           const big = gi === 0;
           const main = `${big ? '' : '+ '}${g.n} × ${g.reps}`, unit = ` ${unitLabel(e.unit)} · `, wt = fmtW(g.weight);
@@ -1501,6 +1596,19 @@ function planImageBlob(plan) {
           P.y += big ? 48 : 36;
         });
       };
+      // Плашка «Отдых N мин» после последнего подхода/круга.
+      P.rest = (it, tx, maxW) => {
+        const sec = restAfter(it);
+        if (!sec) return;
+        P.y += 12;
+        if (d) {
+          roundRect(tx, P.y, maxW, 48, 12, '#efefec');
+          ctx.textBaseline = 'middle'; ctx.font = font(24, 500); ctx.fillStyle = C.text2; const lbl = '⏸ Отдых ';
+          ctx.fillText(lbl, tx + 16, P.y + 25); const lw = ctx.measureText(lbl).width;
+          ctx.font = font(24, 700); ctx.fillStyle = C.text; ctx.fillText(fmtRest(sec), tx + 16 + lw, P.y + 25);
+        }
+        P.y += 48;
+      };
       P.meta = (str, tx) => {
         if (!str) return;
         if (d) { ctx.font = font(23, 500); ctx.fillStyle = C.muted; ctx.textBaseline = 'top'; ctx.fillText(str, tx, P.y + 2); }
@@ -1509,21 +1617,31 @@ function planImageBlob(plan) {
       return P;
     };
     // Упражнения
-    (plan.exercises || []).forEach((ex, i) => {
+    timeline.items.forEach((it) => {
+      const ex = it.ex;
       const pad = 28, x = PAD + pad + 70, w = inner - pad * 2 - 70, right = PAD + inner - pad;
       const y0 = y;
+      const when = `⏱ ${fmtMin(it.start)}–${fmtMin(it.end)} мин`;
       const card = (d) => {
         const P = pen(d, y0 + pad);
+        if (isStage(ex)) {
+          P.T(`${ex.name || (ex.kind === 'warmup' ? 'Разминка' : 'Заминка')} · ${num(ex.duration_min) || 5} мин`, 34, 700, C.text, x, w, 1.25); P.y += 4;
+          P.T(when, 23, 600, C.accent, x, w); P.y += 6;
+          if (ex.notes) P.T(ex.notes, 24, 400, C.text2, x, w, 1.4);
+          return P.y + pad;
+        }
         if (!isSuperset(ex)) {
           const bw = P.badge(ex.change, right);
-          P.T(ex.name, 34, 700, C.text, x, w - bw - 12, 1.25); P.y += 8;
+          P.T(ex.name, 34, 700, C.text, x, w - bw - 12, 1.25); P.y += 4;
+          P.T(when + (ex.rpe ? `  ·  RPE ${fmtRpe(ex.rpe)}` : ''), 23, 600, C.accent, x, w); P.y += 8;
           P.scheme(ex, x, w);
-          P.meta([ex.rest_sec ? `Отдых ${fmtRest(ex.rest_sec)}` : '', ex.rpe ? `RPE ${fmtRpe(ex.rpe)}` : ''].filter(Boolean).join('  ·  '), x);
           if (ex.notes) { P.y += 8; P.T(ex.notes, 24, 400, C.text2, x, w, 1.4); }
+          P.rest(it, x, w);
           return P.y + pad;
         }
         const bw = P.badge(ex.change, right);
         P.T(`Суперсет${ex.name ? `: ${ex.name}` : ''}`, 34, 700, C.text, x, w - bw - 12, 1.25); P.y += 4;
+        P.T(when, 23, 600, C.accent, x, w); P.y += 4;
         P.T(`↻ ${supersetHead(ex)}`, 23, 600, C.accent, x, w); P.y += 10;
         ex.parts.forEach((part, j) => {
           if (j) { P.y += 4; P.T('↓ сразу, без отдыха', 22, 600, C.accent, x + 14, w); P.y += 4; }
@@ -1532,7 +1650,7 @@ function planImageBlob(plan) {
             const Q = pen(dd, sy + 18);
             const pbw = Q.badge(part.change, x + w - 18);
             Q.T(part.name, 29, 700, C.text, px, pw - pbw - 10, 1.25); Q.y += 6;
-            Q.scheme({ ...part, sets: ex.sets }, px, pw);
+            Q.scheme({ ...part, sets: ex.sets }, px, pw, false);
             Q.meta(part.rpe ? `RPE ${fmtRpe(part.rpe)}` : '', px);
             if (part.notes) { Q.y += 4; Q.T(part.notes, 23, 400, C.text2, px, pw, 1.4); }
             return Q.y + 18;
@@ -1548,8 +1666,8 @@ function planImageBlob(plan) {
           }
           P.y = end;
         });
-        if (ex.rest_sec) { P.y += 10; P.T(`↻ отдых ${fmtRest(ex.rest_sec)} → следующий круг`, 22, 600, C.accent, x + 14, w); }
         if (ex.notes) { P.y += 8; P.T(ex.notes, 24, 400, C.text2, x, w, 1.4); }
+        P.rest(it, x, w);
         return P.y + pad;
       };
       const h = card(false) - y0;
@@ -1557,13 +1675,12 @@ function planImageBlob(plan) {
         roundRect(PAD, y0, inner, h, 20, C.card, C.border);
         ctx.beginPath(); ctx.arc(PAD + pad + 26, y0 + pad + 24, 26, 0, Math.PI * 2); ctx.fillStyle = C.accentSoft; ctx.fill();
         ctx.font = font(26, 700); ctx.fillStyle = C.accent; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(String(i + 1), PAD + pad + 26, y0 + pad + 25); ctx.textAlign = 'left';
+        ctx.fillText(it.num ? String(it.num) : ex.kind === 'warmup' ? '🔥' : '🧘', PAD + pad + 26, y0 + pad + 25); ctx.textAlign = 'left';
         card(true);
       }
       y = y0 + h + 16;
     });
     y += 6;
-    if (plan.cooldown) callout('Заминка', plan.cooldown, '#efefec', C.muted);
     if (plan.notes) callout('Заметки', plan.notes, '#efefec', C.muted);
     text(`Дневник тренировок · ${todayIso()}`, 20, 400, C.muted, PAD, inner);
     return y + PAD;
