@@ -116,6 +116,12 @@ label.f > input, label.f > textarea, label.f > select { margin-top: 4px; }
 .badge.warn { background: var(--warn-soft); color: var(--warn); }
 .badge.skip { background: var(--skip-soft); color: var(--skip); }
 .badge.accent { background: var(--accent-soft); color: var(--accent); }
+.badge.bad { background: var(--bad-soft); color: var(--bad); }
+.callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+.wish { padding: 8px 0; border-top: 1px solid var(--border); }
+.wish:first-of-type { border-top: 0; }
+.chk-line { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--text-2); margin: -4px 0 10px; }
+.chk-line input { width: 18px; height: 18px; }
 .ex-card { display: grid; grid-template-columns: 34px 1fr; gap: 10px; padding: 12px 0; border-top: 1px solid var(--border); }
 .ex-card:first-child { border-top: 0; }
 .ex-num {
@@ -274,7 +280,7 @@ const PROFILE = {
 };
 
 function emptyState() {
-  return { version: 2, plans: [], history: [] };
+  return { version: 2, plans: [], history: [], requests: [] };
 }
 
 function safeGet(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
@@ -466,6 +472,17 @@ function viewToday() {
       ${plan.recommendation ? `<div class="callout"><h4>Рекомендация</h4>${esc(plan.recommendation)}</div>` : ''}
     </div>`;
   }
+  if (plan.warnings && plan.warnings.length) {
+    html += `<div class="callout warn"><h4>⚠ Важно</h4>${plan.warnings.map(w => `<div>• ${esc(w)}</div>`).join('')}</div>`;
+  }
+  if (plan.wishes_review && plan.wishes_review.length) {
+    html += `<div class="card"><h3>💬 Ваши пожелания</h3>${plan.wishes_review.map(w => {
+      const d = String(w.decision || '').toLowerCase();
+      const cls = /настоян/.test(d) ? 'warn' : /не прин|отклон/.test(d) ? 'bad' : /измен|частич/.test(d) ? 'accent' : 'good';
+      return `<div class="wish"><div class="row"><b class="grow">${esc(w.wish)}</b><span class="badge ${cls}">${esc(w.decision || '')}</span></div>
+        ${w.reason ? `<div class="small" style="margin-top:2px">${esc(w.reason)}</div>` : ''}</div>`;
+    }).join('')}</div>`;
+  }
   if (plan.warmup) html += `<div class="card soft"><h3>🔥 Разминка</h3><div>${esc(plan.warmup)}</div></div>`;
   html += `<div class="card"><h3>Упражнения</h3>`;
   (plan.exercises || []).forEach((ex, i) => {
@@ -551,18 +568,23 @@ function newDraftFromPlan(status = 'done') {
       notes: ''
     })) : [],
     wellbeing: null, effort: null, duration: plan && plan.duration_min ? plan.duration_min : '',
-    sleep: '', bodyweight: '', notes: '', extras: '', reason: ''
+    sleep: '', bodyweight: '', notes: '', extras: '', wishes: '', insist: false, reason: ''
   };
 }
 function firstNum(v) { const m = String(v ?? '').match(/\d+([.,]\d+)?/); return m ? num(m[0]) : null; }
 
 function ensureDraft() { if (!draft) { draft = newDraftFromPlan(); saveDraft(); } }
 
+function wishesHtml(d) {
+  return `<label class="f">Пожелания к следующей тренировке (что хочется добавить, убрать, изменить)<textarea data-f="wishes" placeholder="Например: хочу больше нагрузки на трапецию; надоели подтягивания">${esc(d.wishes || '')}</textarea></label>
+    <label class="chk-line"><input type="checkbox" data-f="insist" ${d.insist ? 'checked' : ''}> Настаиваю: применить, даже если тренер считает это неоптимальным</label>`;
+}
 function bodySectionHtml(d) {
   return `<div class="grid2">
       <label class="f">Мой вес сегодня, кг<input type="number" inputmode="decimal" min="0" step="0.1" data-f="bodyweight" value="${esc(d.bodyweight ?? '')}" placeholder="${esc(latestBodyweight()?.value ?? PROFILE.startWeight)}"></label>
     </div>
-    <label class="f">Другие уточнения: питание, сон, стресс, поясница, изменения в программе<textarea data-f="extras">${esc(d.extras || '')}</textarea></label>`;
+    <label class="f">Другие уточнения: питание, сон, стресс, поясница<textarea data-f="extras">${esc(d.extras || '')}</textarea></label>
+    ${wishesHtml(d)}`;
 }
 
 function viewLog() {
@@ -661,7 +683,8 @@ function saveLog() {
     createdAt: d.createdAt || new Date().toISOString(),
     date: d.date, status: d.status, planId: d.planId, title: d.title,
     wellbeing: d.wellbeing, notes: (d.notes || '').trim(),
-    bodyweight: num(d.bodyweight), extras: (d.extras || '').trim()
+    bodyweight: num(d.bodyweight), extras: (d.extras || '').trim(),
+    wishes: (d.wishes || '').trim(), insist: !!(d.insist && (d.wishes || '').trim())
   };
   if (d.status === 'done') {
     entry.exercises = d.exercises.filter(ex => ex.name.trim()).map(ex => ({
@@ -709,6 +732,7 @@ function viewHistory() {
     } else if (h.reason) html += `<div class="small">${esc(h.reason)}</div>`;
     if (h.notes) html += `<div class="small" style="margin-top:6px"><i>${esc(h.notes)}</i></div>`;
     if (h.extras) html += `<div class="small muted" style="margin-top:4px">Уточнения: ${esc(h.extras)}</div>`;
+    if (h.wishes) html += `<div class="small" style="margin-top:4px">💬 ${esc(h.wishes)}${h.insist ? ' <span class="badge warn">настаиваю</span>' : ''}</div>`;
     const p = h.planId && plansById[h.planId];
     if (p && (p.summary || p.recommendation)) {
       html += `<details style="margin-top:6px"><summary>План и рекомендация Claude к этой тренировке</summary>
@@ -910,7 +934,7 @@ function buildPrompt(count) {
   const plan = currentPlan();
   const bw = latestBodyweight();
   const L = [];
-  L.push(`Ты — мой персональный тренер по силовым тренировкам. Проанализируй мои последние тренировки и составь план следующей.`);
+  L.push(`Ты — мой персональный тренер по силовым тренировкам. Проанализируй мои последние тренировки и составь план следующей. Строй план в первую очередь на том, что эффективно и безопасно для моей цели, а не только на том, что я прошу.`);
   L.push(`Сегодня: ${today} (${WEEKDAYS[parseIso(today).getDay()]}).`);
   L.push('');
   L.push(`## Обо мне`);
@@ -992,6 +1016,39 @@ function buildPrompt(count) {
     L.push('');
   }
 
+  // Пожелания: текущий запрос, пожелания из недавних записей и всё, на чём я настаивал раньше.
+  const reqText = (ui.reqText || '').trim();
+  // Новые — оставлены после выдачи текущего плана; уже учтённые без «настаиваю» больше не повторяем.
+  const planAt = plan ? plan.createdAt || '' : '';
+  const isNew = (h) => (h.createdAt || '') > planAt;
+  const recentWishes = hist.filter(h => h.wishes && isNew(h));
+  const insistedBefore = [
+    ...hist.filter(h => h.wishes && h.insist && !isNew(h)).map(h => ({ date: h.date, text: h.wishes })),
+    ...(state.requests || []).filter(r => r.insist).map(r => ({ date: r.date, text: r.text }))
+  ].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10);
+  L.push(`## Мои пожелания`);
+  if (!reqText && !recentWishes.length && !insistedBefore.length) L.push('Особых пожеланий нет.');
+  if (reqText) L.push(`- Сейчас ${ui.reqInsist ? '[НАСТАИВАЮ]' : '[пожелание]'}: ${reqText}`);
+  recentWishes.forEach(h => L.push(`- После тренировки ${h.date} ${h.insist ? '[НАСТАИВАЮ]' : '[пожелание]'}: ${h.wishes}`));
+  if (insistedBefore.length) {
+    L.push(`- Ранее я настоял (действует, пока я не отменю):`);
+    insistedBefore.forEach(x => L.push(`  - ${x.date}: ${x.text}`));
+  }
+  L.push('');
+
+  L.push(`## Как принимать решения`);
+  L.push(`Приоритеты по порядку:`);
+  L.push(`1. Безопасность: поясница, восстановление, техника.`);
+  L.push(`2. Эффективность для цели (масса): прогрессивная перегрузка, достаточный недельный объём на мышечную группу, частота ~2 раза в неделю, рабочие подходы близко к отказу (1–3 повтора в запасе), лимит времени.`);
+  L.push(`3. Мои пожелания и ощущения.`);
+  L.push(`Мои пожелания — это вводные, а не приказ. По каждому пожеланию:`);
+  L.push(`- безопасно и не мешает прогрессу → примени;`);
+  L.push(`- можно сделать лучше → примени в изменённом виде и объясни, что поменял и почему;`);
+  L.push(`- неэффективно или небезопасно → НЕ применяй, прямо скажи об этом, объясни риск и предложи альтернативу;`);
+  L.push(`- помечено [НАСТАИВАЮ] → примени, даже если не согласен, но обязательно предупреди о рисках и подскажи, как их снизить (вес, амплитуда, техника, замена части).`);
+  L.push(`Не подстраивайся под мои ощущения в ущерб результату: если ощущения расходятся с цифрами (повторы, веса, RPE), опирайся на цифры и скажи об этом. Каждое пожелание отрази в wishes_review. Риски и важные замечания, которые видишь сам (даже если я не спрашивал), вынеси в warnings.`);
+  L.push('');
+
   L.push(`## Что нужно от тебя`);
   L.push(`1. Короткий итог последней тренировки/периода: что получилось, что нет (2–4 предложения).`);
   L.push(`2. Короткую рекомендацию: что изменить и на что обратить внимание (2–4 предложения).`);
@@ -1004,6 +1061,10 @@ function buildPrompt(count) {
   L.push(JSON.stringify({
     summary: 'Итог прошедшей тренировки, 2–4 предложения',
     recommendation: 'Короткая рекомендация на следующую тренировку, 2–4 предложения',
+    warnings: ['Риск или важное замечание, если есть (иначе пустой массив)'],
+    wishes_review: [
+      { wish: 'Что я просил (коротко)', decision: 'принято | изменено | не принято | принято по настоянию', reason: 'Почему; для «не принято» — альтернатива; для «по настоянию» — риски и как их снизить' }
+    ],
     next_workout: {
       date: 'YYYY-MM-DD',
       title: 'Название, например «Вторник — грудь»',
@@ -1028,7 +1089,7 @@ function buildPrompt(count) {
     }
   }, null, 2));
   L.push('```');
-  L.push(`Правила для JSON: weight — число в кг (0 = собственный вес, null = вес подобрать на месте; для гантелей — вес одной гантели); reps — число или строка-диапазон ("8-10"); unit — "reps" или "sec"; rpe — целевая тяжесть в процентах (50–100); rest_sec — отдых между подходами; суперсет — отдельный пункт с type "superset": rounds — число кругов, rest_sec — отдых после круга, parts — упражнения, которые делаются подряд без отдыха (в истории они помечены как «суперсет 5А/5Б»); sets_detail — необязательный полный список подходов, когда веса/повторы различаются или есть разминочные подходы (warmup: true), тогда sets = число рабочих подходов; change — коротко, что изменилось относительно прошлого раза ("+2.5 кг", "+1 повтор", "−1 подход", "новое", "без изменений"). Используй те же названия упражнений, что и в истории, чтобы я мог отслеживать прогресс.`);
+  L.push(`Правила для JSON: weight — число в кг (0 = собственный вес, null = вес подобрать на месте; для гантелей — вес одной гантели); reps — число или строка-диапазон ("8-10"); unit — "reps" или "sec"; rpe — целевая тяжесть в процентах (50–100); rest_sec — отдых между подходами; суперсет — отдельный пункт с type "superset": rounds — число кругов, rest_sec — отдых после круга, parts — упражнения, которые делаются подряд без отдыха (в истории они помечены как «суперсет 5А/5Б»); sets_detail — необязательный полный список подходов, когда веса/повторы различаются или есть разминочные подходы (warmup: true), тогда sets = число рабочих подходов; change — коротко, что изменилось относительно прошлого раза ("+2.5 кг", "+1 повтор", "−1 подход", "новое", "без изменений"). Используй те же названия упражнений, что и в истории, чтобы я мог отслеживать прогресс. wishes_review — по одному пункту на каждое моё пожелание (пустой массив, если пожеланий нет); decision — строго одно из четырёх значений.`);
   return L.join('\n');
 }
 
@@ -1044,12 +1105,15 @@ function viewClaude() {
       <select id="promptCount" style="width:auto">${[3, 6, 9, 12, 20].map(n => `<option value="${n}" ${n === count ? 'selected' : ''}>${n}</option>`).join('')}</select>
       <span>записей из ${total}; остальные — краткой сводкой.</span>
     </div>
-    <p class="small muted" style="margin-top:0">6 записей ≈ 2 недели при 3 тренировках в неделю: достаточно, чтобы видеть ход прогрессии, пропуски и восстановление после болезни, а длинный тренд по весам уходит в компактную сводку.</p>
+    <p class="small muted" style="margin-top:0">6 записей ≈ 3 недели при 2 тренировках в неделю: достаточно, чтобы видеть ход прогрессии, пропуски и восстановление после болезни, а длинный тренд по весам уходит в компактную сводку.</p>
+    <label class="f">Пожелания или корректировка плана (необязательно)<textarea id="reqText" placeholder="Например: хочу вернуть жим гантелей сидя; в пятницу будет только 50 минут">${esc(ui.reqText || '')}</textarea></label>
+    <label class="chk-line"><input type="checkbox" id="reqInsist" ${ui.reqInsist ? 'checked' : ''}> Настаиваю: применить, даже если тренер считает это неоптимальным</label>
+    <p class="small muted" style="margin-top:0">Claude сначала оценит пожелание: что эффективно и безопасно, применит; что нет — подсветит и предложит альтернативу. Без отметки «Настаиваю» спорные пожелания применяться не будут.</p>
     <pre class="prompt" id="promptText">${esc(prompt)}</pre>
     <div class="row" style="margin-top:8px">
       <button class="btn primary" data-act="copy-prompt">Скопировать prompt</button>
       <button class="btn" data-act="dl-prompt">Скачать .md</button>
-      <span class="small muted">~${Math.round(prompt.length / 1000 * 10) / 10}k символов</span>
+      <span class="small muted" id="promptSize">~${Math.round(prompt.length / 100) / 10}k символов</span>
     </div>
   </div>
   <div class="card">
@@ -1091,6 +1155,8 @@ function normalizePlan(o) {
     rest_between_exercises_sec: num(nw.rest_between_exercises_sec),
     summary: o.summary ? String(o.summary) : '',
     recommendation: o.recommendation ? String(o.recommendation) : '',
+    warnings: Array.isArray(o.warnings) ? o.warnings.filter(Boolean).map(String) : (o.warnings ? [String(o.warnings)] : []),
+    wishes_review: Array.isArray(o.wishes_review) ? o.wishes_review.filter(w => w && w.wish).map(w => ({ wish: String(w.wish), decision: String(w.decision || ''), reason: w.reason ? String(w.reason) : '' })) : [],
     warmup: nw.warmup ? String(nw.warmup) : '',
     cooldown: nw.cooldown ? String(nw.cooldown) : '',
     notes: nw.notes ? String(nw.notes) : '',
@@ -1134,6 +1200,12 @@ function importPlan() {
   if (!o) { msg.textContent = 'Не нашёл корректный JSON в тексте. Попросите Claude вернуть блок ```json.'; return; }
   try {
     const plan = normalizePlan(o);
+    const req = (ui.reqText || '').trim();
+    if (req) {
+      plan.request = { text: req, insist: !!ui.reqInsist };
+      state.requests = [...(state.requests || []), { date: todayIso(), text: req, insist: !!ui.reqInsist }];
+      ui.reqText = ''; ui.reqInsist = false; saveUi();
+    }
     state.plans.push(plan); save();
     if (draft && !draft.id) { draft = null; saveDraft(); }
     toast('План загружен');
@@ -1144,6 +1216,20 @@ function importPlan() {
 /* =====================================================================
    Вкладка «Данные»
    ===================================================================== */
+function insistedHtml() {
+  const items = [
+    ...state.history.filter(h => h.wishes && h.insist).map(h => ({ kind: 'entry', id: h.id, date: h.date, text: h.wishes })),
+    ...(state.requests || []).map((r, i) => ({ ...r, kind: 'req', id: String(i) })).filter(r => r.insist)
+  ].sort((a, b) => b.date.localeCompare(a.date));
+  if (!items.length) return '';
+  return `<h2>Мои требования</h2>
+  <div class="card">
+    <p class="small muted" style="margin-top:0">Пожелания с отметкой «Настаиваю» уходят в каждый prompt, пока вы их не отмените.</p>
+    ${items.map(x => `<div class="wish"><div class="row"><span class="grow">${esc(x.text)}</span>
+      <button class="btn sm" data-act="cancel-insist" data-kind="${x.kind}" data-id="${esc(x.id)}">Отменить</button></div>
+      <div class="small muted">${fmtDate(x.date)}</div></div>`).join('')}
+  </div>`;
+}
 function viewSettings() {
   const P = PROFILE;
   const bw = latestBodyweight();
@@ -1162,6 +1248,7 @@ function viewSettings() {
     </table>
     <p class="small muted" style="margin-bottom:0">Профиль задан в <code>index.html</code> (константа <code>PROFILE</code>). Вес тела записывайте в конце каждой тренировки, он подтягивается сюда и в prompt автоматически.</p>
   </div>
+  ${insistedHtml()}
   <h2>Данные</h2>
   <div class="card">
     <p class="small" style="margin-top:0">Всё хранится в <b>localStorage этого браузера</b>. Данные не уходят в интернет, но пропадут при очистке данных сайта или в другом браузере/устройстве. Периодически сохраняйте бэкап в файл.</p>
@@ -1292,6 +1379,7 @@ function planAsText(plan) {
   const meta = [plan.focus, plan.duration_min ? `~${plan.duration_min} мин` : '', plan.rest_between_exercises_sec ? `${fmtRest(plan.rest_between_exercises_sec)} между упражнениями` : ''].filter(Boolean);
   if (meta.length) L.push(meta.join(' · '));
   if (plan.recommendation) L.push('', `💡 ${plan.recommendation}`);
+  (plan.warnings || []).forEach((w, k) => { if (!k) L.push(''); L.push(`⚠ ${w}`); });
   if (plan.warmup) L.push('', `🔥 Разминка: ${plan.warmup}`);
   L.push('');
   (plan.exercises || []).forEach((ex, i) => {
@@ -1382,6 +1470,7 @@ function planImageBlob(plan) {
       y = y0 + h + 18;
     };
     if (plan.recommendation) callout('Рекомендация', plan.recommendation, C.accentSoft, C.accent);
+    if (plan.warnings && plan.warnings.length) callout('⚠ Важно', plan.warnings.map(w => `• ${w}`).join('\n'), C.warnSoft, C.warn);
     if (plan.warmup) callout('Разминка', plan.warmup, '#efefec', C.muted);
     // «Перо»: рисует (d=true) или только меряет (d=false) блоки, начиная с высоты startY.
     const pen = (d, startY) => {
@@ -1518,7 +1607,7 @@ document.addEventListener('click', async (e) => {
       break;
     case 'edit-entry': {
       const h = state.history.find(x => x.id === b.dataset.id); if (!h) break;
-      draft = JSON.parse(JSON.stringify({ exercises: [], wellbeing: null, effort: null, duration: '', sleep: '', bodyweight: '', notes: '', extras: '', reason: '', ...h }));
+      draft = JSON.parse(JSON.stringify({ exercises: [], wellbeing: null, effort: null, duration: '', sleep: '', bodyweight: '', notes: '', extras: '', wishes: '', insist: false, reason: '', ...h }));
       saveDraft(); setTab('log'); break;
     }
     case 'del-entry':
@@ -1527,6 +1616,11 @@ document.addEventListener('click', async (e) => {
     case 'copy-prompt': toast(await copyText(buildPrompt(ui.promptCount)) ? 'Prompt скопирован — вставьте его в чат Claude' : 'Не удалось скопировать — выделите текст вручную'); break;
     case 'dl-prompt': download(`workout-prompt-${todayIso()}.md`, buildPrompt(ui.promptCount), 'text/markdown'); break;
     case 'import-plan': importPlan(); break;
+    case 'cancel-insist': {
+      if (b.dataset.kind === 'entry') { const h = state.history.find(x => x.id === b.dataset.id); if (h) h.insist = false; }
+      else { const r = (state.requests || [])[+b.dataset.id]; if (r) r.insist = false; }
+      save(); toast('Требование отменено'); render(); break;
+    }
     case 'plan-png': {
       const blob = await planImageBlob(currentPlan());
       download(planFileName('png'), blob); toast('Картинка сохранена'); break;
@@ -1555,8 +1649,14 @@ document.addEventListener('click', async (e) => {
 
 document.addEventListener('input', (e) => {
   const el = e.target;
+  if (el.id === 'reqText' || el.id === 'reqInsist') {
+    ui.reqText = $('#reqText').value; ui.reqInsist = $('#reqInsist').checked; saveUi();
+    const pr = buildPrompt(ui.promptCount);
+    $('#promptText').textContent = pr; $('#promptSize').textContent = `~${Math.round(pr.length / 100) / 10}k символов`;
+    return;
+  }
   if (!draft || ui.tab !== 'log') return;
-  if (el.dataset.f) { draft[el.dataset.f] = el.value; saveDraft(); return; }
+  if (el.dataset.f) { draft[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value; saveDraft(); return; }
   if (el.dataset.ex !== undefined) {
     const ex = draft.exercises[+el.dataset.ex]; if (!ex) return;
     const k = el.dataset.k;
