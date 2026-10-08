@@ -271,23 +271,32 @@ const DRAFT_KEY = 'workoutApp.draft.v1';
 const UI_KEY = 'workoutApp.ui.v1';
 
 // Базовый профиль (приложение однопользовательское — меняется прямо здесь).
+// Поля из PROFILE_FIELDS тренер (Claude) может обновлять через profile_update в ответе, а я — вручную на вкладке «Данные».
 const PROFILE = {
   sex: 'мужчина',
-  age: 32,
+  birthDate: '1994-01-04',
   height: 179,
   startWeight: 76,
-  goal: 'Набор мышечной массы, дополнительный акцент на трапецию',
-  experience: 'Не новичок: есть опыт тренировок, после перерыва вернулся и уже ~6 месяцев занимаюсь 2 раза в неделю. Плато: силовые показатели и вес тела не растут.',
-  schedule: '2 тренировки в неделю, обычно вторник и пятница (изредка дни сдвигаются). Возможно, позже перейду на 3 тренировки в неделю.',
   daysPerWeek: 2,
-  sessionMaxMinutes: 70,
-  rest: 'Отдых между подходами ~2 мин, между упражнениями ~3 мин.',
+  sessionMinutes: 70,
+  goal: 'Набор мышечной массы и рост силы равномерно по всему телу. Акценты на отдельные мышцы (например, трапецию) — только по моим пожеланиям к конкретной тренировке, а не главная цель.',
+  experience: 'Не новичок: есть опыт тренировок, после перерыва вернулся и занимаюсь около полугода, 2 раза в неделю.',
+  schedule: '2 тренировки в неделю, обычно вторник и пятница (изредка дни сдвигаются). Возможно, позже перейду на 3 тренировки в неделю.',
+  duration: 'Около 70 мин вместе с разминкой и заминкой. Это ориентир, а не жёсткий лимит: плюс-минус допустимо, главное — результат.',
+  rest: 'Сколько отдыхать, не знаю — отдых между подходами и упражнениями подбирает тренер под каждое упражнение.',
   equipment: 'Тренажёрный зал: штанга, гантели, турник, брусья, блочные тренажёры, гак-машина.',
-  limitations: 'Боли в пояснице. Приседания со штангой и румынскую тягу пока не делаю — заменил жимом в гак-машине. Избегать осевой нагрузки на позвоночник.'
+  limitations: 'Боли в пояснице. Пока отказ от приседаний и становой тяги.',
+  recommendations: ''
 };
+// Что тренер может менять. Длительность в минутах (session_minutes) — отдельное число для расчёта времени плана.
+const PROFILE_FIELDS = [
+  ['goal', 'Цель'], ['experience', 'Опыт'], ['schedule', 'Расписание'], ['duration', 'Длительность'],
+  ['rest', 'Отдых'], ['equipment', 'Оборудование'], ['limitations', 'Ограничения'], ['recommendations', 'Рекомендации тренера']
+];
+const PROFILE_LABELS = { ...Object.fromEntries(PROFILE_FIELDS), sessionMinutes: 'Ориентир по времени, мин' };
 
 function emptyState() {
-  return { version: 2, plans: [], history: [], requests: [] };
+  return { version: 2, plans: [], history: [], requests: [], profileEdits: {}, profileLog: [] };
 }
 
 function safeGet(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
@@ -328,6 +337,38 @@ const pad = (n) => String(n).padStart(2, '0');
 const isoDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const todayIso = () => isoDate(new Date());
 const parseIso = (s) => { const [y, m, d] = String(s).split('-').map(Number); return new Date(y, (m || 1) - 1, d || 1); };
+// Полных лет на дату (по умолчанию — сегодня).
+function ageOn(birth, day = todayIso()) {
+  const [by, bm, bd] = birth.split('-').map(Number), [y, m, d] = day.split('-').map(Number);
+  return y - by - (m < bm || (m === bm && d < bd) ? 1 : 0);
+}
+const yearsWord = (n) => n % 10 === 1 && n % 100 !== 11 ? 'год' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'года' : 'лет';
+// Действующий профиль: базовый PROFILE + правки тренера и мои (state.profileEdits).
+function profile() {
+  return { ...PROFILE, ...((state && state.profileEdits) || {}) };
+}
+// Изменения профиля из ответа Claude (profile_update) или ручной правки. Возвращает список применённых изменений.
+function applyProfileUpdate(upd, by, reason) {
+  if (!upd || typeof upd !== 'object') return [];
+  const cur = profile();
+  const changes = [];
+  const set = (field, value) => {
+    if (value === cur[field]) return;
+    state.profileEdits = { ...(state.profileEdits || {}), [field]: value };
+    changes.push({ field, from: cur[field], to: value });
+  };
+  for (const [f] of PROFILE_FIELDS) {
+    if (upd[f] === undefined || upd[f] === null) continue;
+    set(f, String(upd[f]).trim());
+  }
+  const mins = num(upd.session_minutes ?? upd.sessionMinutes);
+  if (mins >= 20 && mins <= 240) set('sessionMinutes', Math.round(mins));
+  if (!changes.length) return [];
+  const at = new Date().toISOString();
+  const why = String(reason ?? upd.reason ?? '').trim();
+  state.profileLog = [...(state.profileLog || []), ...changes.map(c => ({ ...c, at, date: todayIso(), by, reason: why }))];
+  return changes.map(c => ({ ...c, reason: why }));
+}
 const addDays = (iso, n) => { const d = parseIso(iso); d.setDate(d.getDate() + n); return isoDate(d); };
 const MONTHS = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 const WEEKDAYS = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
@@ -524,12 +565,14 @@ function viewToday() {
   }
   const used = state.history.some(h => h.planId === plan.id);
   const timeline = planItems(plan);
-  const overLimit = fmtMin(timeline.total) > PROFILE.sessionMaxMinutes;
+  // Длительность — ориентир, а не лимит: подсвечиваем, только если план заметно дольше.
+  const target = profile().sessionMinutes;
+  const overLimit = fmtMin(timeline.total) > target + 10;
   html += `<h2>${esc(plan.title || 'Тренировка')}</h2>
     <div class="row small" style="margin:-6px 0 12px">
       ${plan.date ? `<span class="badge accent">📅 ${fmtDate(plan.date)}</span>` : ''}
       ${plan.focus ? `<span class="badge">${esc(plan.focus)}</span>` : ''}
-      <span class="badge ${overLimit ? 'warn' : ''}">⏱ ~${fmtMin(timeline.total)} мин${overLimit ? ` — больше лимита ${PROFILE.sessionMaxMinutes}` : ''}</span>
+      <span class="badge ${overLimit ? 'warn' : ''}">⏱ ~${fmtMin(timeline.total)} мин${overLimit ? ` — дольше ориентира ~${target}` : ''}</span>
       ${plan.rest_between_exercises_sec ? `<span class="badge">↻ ${esc(Math.round(plan.rest_between_exercises_sec / 60 * 10) / 10)} мин между упражнениями</span>` : ''}
       ${used ? '<span class="badge good">✓ уже записана</span>' : ''}
     </div>`;
@@ -541,6 +584,10 @@ function viewToday() {
   }
   if (plan.warnings && plan.warnings.length) {
     html += `<div class="callout warn"><h4>⚠ Важно</h4>${plan.warnings.map(w => `<div>• ${esc(w)}</div>`).join('')}</div>`;
+  }
+  if (plan.profile_changes && plan.profile_changes.length) {
+    html += `<div class="callout"><h4>📝 Тренер обновил «Обо мне»</h4>${plan.profile_changes.map(c => `<div>• <b>${esc(PROFILE_LABELS[c.field] || c.field)}:</b> ${esc(c.to || '—')}</div>`).join('')}
+      ${plan.profile_changes[0].reason ? `<div class="small" style="margin-top:4px">${esc(plan.profile_changes[0].reason)}</div>` : ''}</div>`;
   }
   if (plan.wishes_review && plan.wishes_review.length) {
     html += `<div class="card"><h3>💬 Ваши пожелания</h3>${plan.wishes_review.map(w => {
@@ -1008,7 +1055,7 @@ function planLine(ex) {
 }
 
 function buildPrompt(count) {
-  const P = PROFILE;
+  const P = profile();
   const today = todayIso();
   const hist = sortedHistory();
   const recent = hist.slice(0, count);
@@ -1020,14 +1067,15 @@ function buildPrompt(count) {
   L.push(`Сегодня: ${today} (${WEEKDAYS[parseIso(today).getDay()]}).`);
   L.push('');
   L.push(`## Обо мне`);
-  L.push(`- ${P.sex}, возраст ${P.age}, рост ${P.height} см, вес ${bw ? `${bw.value} кг (на ${bw.date})` : `${P.startWeight} кг`}`);
+  L.push(`- ${P.sex}, возраст ${ageOn(P.birthDate, today)}, рост ${P.height} см, вес ${bw ? `${bw.value} кг (последний записанный, на ${bw.date})` : `~${P.startWeight} кг`}`);
   L.push(`- Цель: ${P.goal}`);
   L.push(`- Опыт: ${P.experience}`);
   L.push(`- Расписание: ${P.schedule}`);
-  L.push(`- Длительность тренировки: не более ${P.sessionMaxMinutes} мин, включая разминку`);
+  L.push(`- Длительность: ${P.duration} Ориентир для расчёта времени плана — ${P.sessionMinutes} мин.`);
   L.push(`- Отдых: ${P.rest}`);
   L.push(`- Оборудование: ${P.equipment}`);
   L.push(`- Ограничения: ${P.limitations}`);
+  if (P.recommendations) L.push(`- Твои постоянные рекомендации (ты записал их раньше): ${P.recommendations}`);
   L.push(`- RPE я указываю в процентах от максимального усилия: 100% — отказ, 90% — ~1 повтор в запасе, 80% — ~2–3 в запасе.`);
   L.push('');
 
@@ -1133,7 +1181,7 @@ function buildPrompt(count) {
   L.push(`## Как принимать решения`);
   L.push(`Приоритеты по порядку:`);
   L.push(`1. Безопасность: поясница, восстановление, техника.`);
-  L.push(`2. Эффективность для цели (масса): прогрессивная перегрузка, достаточный недельный объём на мышечную группу, частота ~2 раза в неделю, рабочие подходы близко к отказу (1–3 повтора в запасе), лимит времени.`);
+  L.push(`2. Эффективность для цели: прогрессивная перегрузка, достаточный недельный объём на каждую мышечную группу без перекоса, частота ~2 раза в неделю, рабочие подходы близко к отказу (1–3 повтора в запасе), отдых, достаточный для качества подходов, время около ориентира.`);
   L.push(`3. Мои пожелания и ощущения.`);
   L.push(`Мои пожелания — это вводные, а не приказ. По каждому пожеланию:`);
   L.push(`- безопасно и не мешает прогрессу → примени;`);
@@ -1148,7 +1196,9 @@ function buildPrompt(count) {
   L.push(`1. Короткий итог последней тренировки/периода: что получилось, что нет (2–4 предложения).`);
   L.push(`2. Короткую рекомендацию: что изменить и на что обратить внимание (2–4 предложения).`);
   L.push(`3. План следующей тренировки на ближайший тренировочный день (обычно вт или пт): упражнения, подходы, повторы, вес, отдых, целевое RPE, подсказки по технике.`);
-  L.push(`Учитывай: цель — масса, у меня плато; прогрессию нагрузок (если все подходы выполнены с запасом — повышай вес или повторы, если не добраны — оставь или снизь); ограничения по пояснице (без осевой нагрузки); лимит ${P.sessionMaxMinutes} мин с учётом отдыха; после пропусков и болезни — плавный возврат; если сейчас болезнь — предложи отдых или восстановительную активность; вес тела и мои уточнения.`);
+  L.push(`4. Если нужно, обнови мои данные из раздела «Обо мне» (profile_update, см. формат ниже).`);
+  L.push(`Учитывай: мою цель и раздел «Обо мне»; прогрессию нагрузок (если все подходы выполнены с запасом — повышай вес или повторы, если не добраны — оставь или снизь); ограничения; длительность около ${P.sessionMinutes} мин с учётом отдыха (небольшое отклонение допустимо, если это нужно для результата); после пропусков и болезни — плавный возврат; если сейчас болезнь — предложи отдых или восстановительную активность; вес тела и мои уточнения.`);
+  L.push(`Отдых между подходами и между упражнениями подбирай сам под каждое упражнение и цель: я на тебя в этом полагаюсь. Если по моим отчётам видно, что отдых не подходит (не добираю повторы, затягиваю тренировку), скорректируй его в плане и при необходимости в данных.`);
   L.push('');
   L.push(`## Формат ответа (строго)`);
   L.push(`Сначала можешь кратко написать текстом. Затем ОБЯЗАТЕЛЬНО один блок \`\`\`json со следующей структурой — я загружу его в приложение:`);
@@ -1168,6 +1218,7 @@ function buildPrompt(count) {
       wishes: 'Пожелания к следующей тренировке', insist: false,
       assumptions: ['Что пришлось додумать или что понял неоднозначно']
     } } : {}),
+    profile_update: { limitations: 'Новый полный текст поля (только если меняешь)', reason: 'Почему меняю' },
     summary: 'Итог прошедшей тренировки, 2–4 предложения',
     recommendation: 'Короткая рекомендация на следующую тренировку, 2–4 предложения',
     warnings: ['Риск или важное замечание, если есть (иначе пустой массив)'],
@@ -1197,7 +1248,8 @@ function buildPrompt(count) {
     }
   }, null, 2));
   L.push('```');
-  L.push(`Правила для JSON: weight — число в кг (0 = собственный вес, null = вес подобрать на месте; для гантелей — вес одной гантели); reps — число или строка-диапазон ("8-10"); unit — "reps" или "sec"; rpe — целевая тяжесть в процентах (50–100); rest_sec — отдых между подходами; суперсет — отдельный пункт с type "superset": rounds — число кругов, rest_sec — отдых после круга, parts — упражнения, которые делаются подряд без отдыха (в истории они помечены как «суперсет 5А/5Б»); sets_detail — необязательный полный список подходов, когда веса/повторы различаются или есть разминочные подходы (warmup: true), тогда sets = число рабочих подходов; change — коротко, что изменилось относительно прошлого раза ("+2.5 кг", "+1 повтор", "−1 подход", "новое", "без изменений"). Используй те же названия упражнений, что и в истории, чтобы я мог отслеживать прогресс. Разминка и заминка — первый и последний пункты exercises с kind "warmup"/"cooldown" и duration_min. Время тренировки приложение считает само: подход ≈ 3 сек на повтор + 10 сек (30–90 сек), разминочный подход + 1 мин отдыха, rest_sec между рабочими подходами, rest_between_exercises_sec между упражнениями, переход между частями суперсета 15 сек, плюс разминка и заминка. Подбирай подходы и отдых так, чтобы по этому расчёту тренировка укладывалась в лимит. wishes_review — по одному пункту на каждое моё пожелание (пустой массив, если пожеланий нет); decision — строго одно из четырёх значений.`);
+  L.push(`Правила для JSON: weight — число в кг (0 = собственный вес, null = вес подобрать на месте; для гантелей — вес одной гантели); reps — число или строка-диапазон ("8-10"); unit — "reps" или "sec"; rpe — целевая тяжесть в процентах (50–100); rest_sec — отдых между подходами; суперсет — отдельный пункт с type "superset": rounds — число кругов, rest_sec — отдых после круга, parts — упражнения, которые делаются подряд без отдыха (в истории они помечены как «суперсет 5А/5Б»); sets_detail — необязательный полный список подходов, когда веса/повторы различаются или есть разминочные подходы (warmup: true), тогда sets = число рабочих подходов; change — коротко, что изменилось относительно прошлого раза ("+2.5 кг", "+1 повтор", "−1 подход", "новое", "без изменений"). Используй те же названия упражнений, что и в истории, чтобы я мог отслеживать прогресс. Разминка и заминка — первый и последний пункты exercises с kind "warmup"/"cooldown" и duration_min. Время тренировки приложение считает само: подход ≈ 3 сек на повтор + 10 сек (30–90 сек), разминочный подход + 1 мин отдыха, rest_sec между рабочими подходами, rest_between_exercises_sec между упражнениями, переход между частями суперсета 15 сек, плюс разминка и заминка. Подбирай подходы и отдых так, чтобы по этому расчёту тренировка была около ориентира по длительности. wishes_review — по одному пункту на каждое моё пожелание (пустой массив, если пожеланий нет); decision — строго одно из четырёх значений.`);
+  L.push(`Правила для profile_update: это твои правки в разделе «Обо мне» — ты мой тренер и ведёшь эти данные. Поля: ${PROFILE_FIELDS.map(([k, l]) => `${k} (${l.toLowerCase()})`).join(', ')}, а также session_minutes — ориентир длительности числом. Значение поля — полный новый текст, он заменит старый целиком, поэтому сохрани из старого всё, что остаётся верным. recommendations — твои постоянные рекомендации, которые должны действовать во всех следующих тренировках (отдых, техника, восстановление, питание); то, что касается только следующей тренировки, пиши в recommendation. Включай только изменившиеся поля, а когда менять нечего — не включай profile_update вообще. Меняй, когда для этого есть причина: я сообщил о новой боли или травме, ограничение снято, сменились расписание или цель, ты выработал правило по отдыху. reason — коротко, почему меняешь.`);
   if (report) L.push(`Правила для completed_workout: это запись о тренировке из моего текста, приложение сохранит её в историю без ручной правки, поэтому ничего не выдумывай. date — дата тренировки (если не сказано, сегодня). status: "done" — тренировка была (хотя бы частично), "skipped" — пропуск, "sick" — болезнь; для skipped/sick причина в reason, exercises пустой. В exercises — каждое упражнение плана по номеру tag ("2", "5А"; у суперсета — каждая часть отдельно), название и план приложение подставит само по номеру. as_planned: true — сделано как в плане (и если я про упражнение ничего не сказал — тоже as_planned, но отметь это в assumptions). Если что-то отличалось — sets: полный список фактически сделанных подходов {weight, reps, warmup?, done?}, подходы, которые я не сделал, не включай. skipped: true — упражнение не делал. Упражнение не из плана — tag null и name (то же название, что в истории, если оно там есть). rpe — тяжесть упражнения в процентах, только если я её назвал или явно описал (например, «до отказа» = 100). wellbeing — самочувствие 1–5, effort — общая тяжесть тренировки в %, duration — минуты, sleep — часы сна, bodyweight — кг; чего нет в тексте — null. wishes — мои пожелания к следующей тренировке из текста, insist — true, только если я прямо настаиваю; эти пожелания тоже отрази в wishes_review. assumptions — всё, что пришлось додумать или что могло быть понято двояко (пустой массив, если всё ясно).`);
   return L.join('\n');
 }
@@ -1370,17 +1422,21 @@ function importPlan() {
     // Сначала тренировка: её номера относятся к плану, который был текущим до этого ответа.
     const c = o.completed_workout || o.completedWorkout;
     const entry = c ? normalizeLog(c, currentPlan()) : null;
-    const plan = o.next_workout || o.nextWorkout || o.workout || o.exercises || !entry ? normalizePlan(o) : null;
+    const upd = o.profile_update || o.profileUpdate || null;
+    const plan = o.next_workout || o.nextWorkout || o.workout || o.exercises || (!entry && !upd) ? normalizePlan(o) : null;
     if (ui.lastImport === text && !confirm('Этот ответ уже загружен. Загрузить ещё раз? (Запись и план продублируются.)')) return;
     ui.lastImport = text;
     if (entry) { state.history.push(entry); ui.report = ''; }
     saveUi();
+    const changes = applyProfileUpdate(upd, 'coach');
+    const updMsg = changes.length ? `, данные «Обо мне» обновлены (${changes.length})` : '';
     if (!plan) {
       save();
-      toast('Тренировка записана в историю');
-      setTab('history');
+      toast((entry ? 'Тренировка записана в историю' : changes.length ? 'Данные «Обо мне» обновлены' : 'Тренер ничего не изменил') + (entry ? updMsg : ''));
+      setTab(entry ? 'history' : 'settings');
       return;
     }
+    if (changes.length) plan.profile_changes = changes;
     const req = (ui.reqText || '').trim();
     if (req) {
       plan.request = { text: req, insist: !!ui.reqInsist };
@@ -1389,7 +1445,7 @@ function importPlan() {
     }
     state.plans.push(plan); save();
     if (draft && !draft.id) { draft = null; saveDraft(); }
-    toast(entry ? 'Тренировка записана, новый план загружен' : 'План загружен');
+    toast((entry ? 'Тренировка записана, новый план загружен' : 'План загружен') + updMsg);
     setTab(entry && entry.assumptions.length ? 'history' : 'today');
   } catch (e) { msg.textContent = e.message; }
 }
@@ -1412,22 +1468,39 @@ function insistedHtml() {
   </div>`;
 }
 function viewSettings() {
-  const P = PROFILE;
-  const bw = latestBodyweight();
-  const row = (k, v) => `<tr><th style="width:34%">${k}</th><td>${esc(v)}</td></tr>`;
+  const P = profile();
+  const edits = state.profileEdits || {};
+  const log = state.profileLog || [];
+  const lastChange = (f) => [...log].reverse().find(x => x.field === f);
+  const row = (k, v) => `<tr><th style="width:34%">${k}</th><td>${v}</td></tr>`;
+  // Поле, которое может менять тренер: значение, кто и когда менял, кнопки правки.
+  const field = (f, label, text) => {
+    const ch = edits[f] !== undefined ? lastChange(f) : null;
+    return row(label, `${text ? esc(text) : '<span class="muted">—</span>'}
+      ${ch ? `<div class="small muted">${ch.by === 'coach' ? 'Изменил тренер' : 'Изменено вручную'} ${fmtDate(ch.date)}${ch.reason ? `: ${esc(ch.reason)}` : ''}</div>` : ''}
+      <div class="row no-print" style="margin-top:4px">
+        <button class="btn sm" data-act="edit-profile" data-field="${f}">✎ Изменить</button>
+        ${edits[f] !== undefined ? `<button class="btn sm" data-act="reset-profile" data-field="${f}" title="Вернуть исходное значение">↺ Исходное</button>` : ''}
+      </div>`);
+  };
   return `<h2>Обо мне</h2>
   <div class="card">
     <table class="data">
-      ${row('Возраст, рост', `${P.age} лет, ${P.height} см`)}
-      ${row('Вес', bw ? `${bw.value} кг (${fmtDate(bw.date)}), старт ${P.startWeight} кг` : `${P.startWeight} кг`)}
-      ${row('Цель', P.goal)}
-      ${row('Опыт', P.experience)}
-      ${row('Расписание', P.schedule)}
-      ${row('Длительность', `не более ${P.sessionMaxMinutes} мин`)}
-      ${row('Отдых', P.rest)}
-      ${row('Ограничения', P.limitations)}
+      ${row('Возраст, рост', `${ageOn(P.birthDate)} ${yearsWord(ageOn(P.birthDate))} (род. ${parseIso(P.birthDate).getDate()} ${MONTHS[parseIso(P.birthDate).getMonth()]} ${P.birthDate.slice(0, 4)}), ${P.height} см`)}
+      ${field('goal', 'Цель', P.goal)}
+      ${field('experience', 'Опыт', P.experience)}
+      ${field('schedule', 'Расписание', P.schedule)}
+      ${field('duration', 'Длительность', P.duration)}
+      ${field('sessionMinutes', 'Ориентир по времени', `~${P.sessionMinutes} мин — по нему считается время плана`)}
+      ${field('rest', 'Отдых', P.rest)}
+      ${field('equipment', 'Оборудование', P.equipment)}
+      ${field('limitations', 'Ограничения', P.limitations)}
+      ${field('recommendations', 'Рекомендации тренера', P.recommendations)}
     </table>
-    <p class="small muted" style="margin-bottom:0">Профиль задан в <code>index.html</code> (константа <code>PROFILE</code>). Вес тела записывайте в конце каждой тренировки, он подтягивается сюда и в prompt автоматически.</p>
+    <p class="small muted" style="margin-bottom:0">Эти данные уходят в каждый prompt. Тренер (Claude) может обновлять их сам: если в его ответе есть <code>profile_update</code>, изменения применятся при загрузке ответа на вкладке «Claude ⇄». Вес тела указывайте в описании тренировки, когда захотите.</p>
+    ${log.length ? `<details class="small" style="margin-top:8px"><summary>История изменений (${log.length})</summary>
+      ${[...log].reverse().slice(0, 30).map(x => `<div style="margin-top:6px"><b>${fmtDate(x.date)}</b> · ${esc(PROFILE_LABELS[x.field] || x.field)} · ${x.by === 'coach' ? 'тренер' : 'вручную'}${x.reason ? ` — ${esc(x.reason)}` : ''}
+        <div class="muted">было: ${esc(x.from ?? '—') || '—'}</div><div>стало: ${esc(x.to ?? '—') || '—'}</div></div>`).join('')}</details>` : ''}
   </div>
   ${insistedHtml()}
   <h2>Данные</h2>
@@ -1830,6 +1903,23 @@ document.addEventListener('click', async (e) => {
       else { const r = (state.requests || [])[+b.dataset.id]; if (r) r.insist = false; }
       save(); toast('Требование отменено'); render(); break;
     }
+    case 'edit-profile': {
+      const f = b.dataset.field, cur = profile()[f];
+      const v = prompt(`${PROFILE_LABELS[f]}:`, cur ?? '');
+      if (v === null) break;
+      const done = applyProfileUpdate({ [f === 'sessionMinutes' ? 'session_minutes' : f]: v }, 'me', '');
+      if (done.length) { save(); toast('Сохранено'); render(); }
+      break;
+    }
+    case 'reset-profile': {
+      const f = b.dataset.field;
+      if (!confirm(`Вернуть исходное значение поля «${PROFILE_LABELS[f]}»?`)) break;
+      const from = profile()[f];
+      const { [f]: _, ...rest } = state.profileEdits || {};
+      state.profileEdits = rest;
+      state.profileLog = [...(state.profileLog || []), { field: f, from, to: PROFILE[f], at: new Date().toISOString(), date: todayIso(), by: 'me', reason: 'возврат к исходному' }];
+      save(); toast('Возвращено исходное значение'); render(); break;
+    }
     case 'plan-png': {
       const blob = await planImageBlob(currentPlan());
       download(planFileName('png'), blob); toast('Картинка сохранена'); break;
@@ -1849,7 +1939,7 @@ document.addEventListener('click', async (e) => {
     case 'import-json': $('#fileInput').click(); break;
     case 'load-seed':
       if (state.history.length && !confirm('Стартовые данные заменят текущие. Продолжить? (Сначала можно скачать бэкап.)')) break;
-      state = buildSeed(); save(); draft = null; saveDraft(); toast('Стартовые данные загружены'); setTab('today'); break;
+      state = { ...buildSeed(), profileEdits: state.profileEdits || {}, profileLog: state.profileLog || [] }; save(); draft = null; saveDraft(); toast('Стартовые данные загружены'); setTab('today'); break;
     case 'wipe':
       if (confirm('Удалить все тренировки, планы и профиль? Это нельзя отменить.')) { state = emptyState(); save(); draft = null; saveDraft(); setTab('today'); }
       break;
