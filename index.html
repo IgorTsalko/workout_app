@@ -268,6 +268,7 @@ table.data th { color: var(--muted); font-weight: 500; }
 const STORE_KEY = 'workoutApp.v1';
 const DRAFT_KEY = 'workoutApp.draft.v1';
 const UI_KEY = 'workoutApp.ui.v1';
+const UNDO_KEY = 'workoutApp.undo.v1';   // снимок данных до последней загрузки ответа тренера
 
 // Базовый профиль (приложение однопользовательское — меняется прямо здесь).
 // Поля из PROFILE_FIELDS тренер (Claude) может обновлять через profile_update в ответе, а я — вручную на вкладке «Данные».
@@ -325,6 +326,27 @@ function saveUi() { safeSet(UI_KEY, JSON.stringify(ui)); }
 let draft = null;
 try { draft = JSON.parse(safeGet(DRAFT_KEY) || 'null'); } catch (e) { draft = null; }
 function saveDraft() { draft ? safeSet(DRAFT_KEY, JSON.stringify(draft)) : safeDel(DRAFT_KEY); }
+
+// Откат последней загрузки: перед импортом сохраняем данные и текст описания целиком, кнопка возвращает их.
+function getUndo() { try { return JSON.parse(safeGet(UNDO_KEY) || 'null'); } catch (e) { return null; } }
+function undoHtml() {
+  const u = getUndo();
+  if (!u) return '';
+  const t = new Date(u.at);
+  return `<div class="callout no-print" style="margin-bottom:12px"><div class="row"><span class="grow small">Загружен ответ тренера${u.what ? `: ${esc(u.what)}` : ''} · ${t.getDate()} ${MONTHS[t.getMonth()]}, ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}. Проверьте; если что-то не так — откатите.</span>
+    <button class="btn sm" data-act="undo-import">↶ Откатить загрузку</button></div></div>`;
+}
+function undoImport() {
+  const u = getUndo();
+  if (!u) return;
+  if (!confirm('Вернуть данные к состоянию до последней загрузки ответа тренера? Запись о тренировке, новый план и правки «Обо мне» из этого ответа удалятся, описание тренировки вернётся в поле. Изменения, сделанные после загрузки, тоже пропадут.')) return;
+  try { state = { ...emptyState(), ...JSON.parse(u.state) }; } catch (e) { toast('Не удалось откатить: снимок повреждён'); return; }
+  save();
+  ui.report = u.report || ''; ui.lastImport = ''; saveUi();
+  safeDel(UNDO_KEY);
+  toast('Загрузка откачена');
+  setTab('claude');
+}
 
 /* =====================================================================
    Утилиты
@@ -556,7 +578,7 @@ function viewToday() {
       </div>
     </div>`;
   }
-  let html = '';
+  let html = undoHtml();
   if (last) {
     const gap = daysBetween(last.date, todayIso());
     html += `<div class="row small muted no-print" style="margin-bottom:10px">
@@ -854,7 +876,7 @@ function latestBodyweight() {
 function viewHistory() {
   const items = sortedHistory();
   if (!items.length) return `<div class="card empty"><p>История пуста.</p></div>`;
-  let html = `<h2>История</h2>`;
+  let html = `<h2>История</h2>${undoHtml()}`;
   const plansById = Object.fromEntries(state.plans.map(p => [p.id, p]));
   for (const h of items) {
     const d = parseIso(h.date); const st = STATUS[h.status];
@@ -1324,6 +1346,7 @@ function viewClaude() {
   </div>
   <div class="card">
     <h3>Шаг 3. Вставить итоговый JSON</h3>
+    ${undoHtml()}
     <p class="small muted" style="margin-top:0">Вставьте финальный ответ тренера целиком — приложение найдёт в нём блок <code>json</code>, проверит план (одно упражнение дважды, в том числе в разминке), запишет тренировку в историю (если она там есть) и загрузит новый план.</p>
     <textarea id="importText" style="min-height:150px" placeholder="Вставьте сюда финальный ответ тренера с JSON…"></textarea>
     <div class="row" style="margin-top:8px">
@@ -1496,10 +1519,13 @@ function importPlan() {
       return;
     }
     if (issues.length) plan.warnings = [...plan.warnings, ...issues.map(x => `Проверка приложения: ${x}`)];
+    const undo = { at: new Date().toISOString(), state: JSON.stringify(state), report: ui.report || '',
+      what: [entry && 'тренировка', plan && 'план', upd && 'данные «Обо мне»'].filter(Boolean).join(', ') };
     ui.lastImport = text;
     if (entry || plan) ui.report = '';
     if (entry) state.history.push(entry);
     saveUi();
+    safeSet(UNDO_KEY, JSON.stringify(undo));
     const changes = applyProfileUpdate(upd, 'coach');
     const updMsg = changes.length ? `, данные «Обо мне» обновлены (${changes.length})` : '';
     if (!plan) {
@@ -1970,6 +1996,7 @@ document.addEventListener('click', async (e) => {
     case 'copy-prompt': toast(await copyText(buildPrompt(ui.promptCount)) ? 'Промпт тренера скопирован — вставьте его в чат Claude' : 'Не удалось скопировать — выделите текст вручную'); break;
     case 'dl-prompt': download(`workout-prompt-${todayIso()}.md`, buildPrompt(ui.promptCount), 'text/markdown'); break;
     case 'import-plan': importPlan(); break;
+    case 'undo-import': undoImport(); break;
     case 'cancel-insist': {
       if (b.dataset.kind === 'entry') { const h = state.history.find(x => x.id === b.dataset.id); if (h) h.insist = false; }
       else { const r = (state.requests || [])[+b.dataset.id]; if (r) r.insist = false; }
@@ -2011,9 +2038,9 @@ document.addEventListener('click', async (e) => {
     case 'import-json': $('#fileInput').click(); break;
     case 'load-seed':
       if (state.history.length && !confirm('Стартовые данные заменят текущие. Продолжить? (Сначала можно скачать бэкап.)')) break;
-      state = { ...buildSeed(), profileEdits: state.profileEdits || {}, profileLog: state.profileLog || [] }; save(); draft = null; saveDraft(); toast('Стартовые данные загружены'); setTab('today'); break;
+      state = { ...buildSeed(), profileEdits: state.profileEdits || {}, profileLog: state.profileLog || [] }; save(); safeDel(UNDO_KEY); draft = null; saveDraft(); toast('Стартовые данные загружены'); setTab('today'); break;
     case 'wipe':
-      if (confirm('Удалить все тренировки, планы и профиль? Это нельзя отменить.')) { state = emptyState(); save(); draft = null; saveDraft(); setTab('today'); }
+      if (confirm('Удалить все тренировки, планы и профиль? Это нельзя отменить.')) { state = emptyState(); save(); safeDel(UNDO_KEY); draft = null; saveDraft(); setTab('today'); }
       break;
   }
 });
@@ -2053,7 +2080,7 @@ $('#fileInput').addEventListener('change', async (e) => {
     if (!confirm(`Восстановить ${data.history.length} записей и ${data.plans.length} планов? Текущие данные будут заменены.`)) return;
     delete data.profile;
     state = { ...emptyState(), ...data };
-    save(); toast('Данные восстановлены'); render();
+    save(); safeDel(UNDO_KEY); toast('Данные восстановлены'); render();
   } catch (err) { toast('Файл не похож на бэкап этого приложения'); }
 });
 
