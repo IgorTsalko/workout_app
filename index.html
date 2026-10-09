@@ -132,7 +132,6 @@ label.f > input, label.f > textarea, label.f > select { margin-top: 4px; }
 .ex-scheme { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; margin: 2px 0; }
 .ex-scheme .unit { font-size: 14px; font-weight: 500; color: var(--text-2); }
 .badge.time { background: none; border: 1px solid var(--border); color: var(--text-2); margin-left: 6px; }
-.ex-num.stage { background: var(--surface-2); font-size: 15px; }
 .grp { margin-top: 6px; }
 .grp-h { font-size: 11.5px; font-weight: 600; letter-spacing: .4px; text-transform: uppercase; color: var(--muted); }
 .grp-h .rest { text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--text-2); }
@@ -458,19 +457,24 @@ const SS_SWITCH = 15;         // переход между частями суп
 // Оценка времени одного подхода: ~3 сек на повтор + подготовка.
 const workSec = (e, reps) => e.unit === 'sec' ? (firstNum(reps) || 30) + 10 : Math.min(90, Math.max(30, (firstNum(reps) || 10) * 3 + 10));
 const fmtMin = (sec) => Math.round(sec / 60);
-// Пункты плана по порядку с таймингом: start/end в секундах от начала тренировки и шаги (подходы/круги) с отдыхом.
-function planItems(plan) {
+const stageName = (ex) => ex.name || (ex.kind === 'warmup' ? 'Разминка' : 'Заминка');
+// Все пункты плана по порядку. Разминка и заминка — такие же пункты: разминка №1, заминка последняя.
+function planList(plan) {
   const list = [...(plan.exercises || [])];
   if (!list.some(e => e.kind === 'warmup') && plan.warmup) list.unshift({ kind: 'warmup', name: 'Разминка', duration_min: 5, notes: plan.warmup });
   if (!list.some(e => e.kind === 'cooldown') && plan.cooldown) list.push({ kind: 'cooldown', name: 'Заминка', duration_min: 5, notes: plan.cooldown });
+  return list;
+}
+// Пункты плана по порядку с таймингом: start/end в секундах от начала тренировки и шаги (подходы/круги) с отдыхом.
+function planItems(plan) {
+  const list = planList(plan);
   const transition = plan.rest_between_exercises_sec ?? 180;
   const strength = list.map((e, i) => isStage(e) ? -1 : i).filter(i => i >= 0);
   const lastStrength = strength[strength.length - 1];
-  let t = 0, n = 0;
+  let t = 0;
   const items = list.map((ex, i) => {
-    const start = t;
-    if (isStage(ex)) { t += (num(ex.duration_min) || 5) * 60; return { ex, num: null, start, end: t, steps: [] }; }
-    n++;
+    const start = t, n = i + 1;
+    if (isStage(ex)) { t += (num(ex.duration_min) || 5) * 60; return { ex, num: n, start, end: t, steps: [] }; }
     const after = i === lastStrength ? 0 : transition;
     const steps = [];
     let end = t;
@@ -505,11 +509,13 @@ const warmupLine = (ex) => warmupSets(ex).map(w => {
 // Отдых между рабочими подходами — только если рабочих подходов больше одного.
 const workRest = (ex) => ex.rest_sec && workSets(ex).length > 1 ? ex.rest_sec : 0;
 
-// Плоский список упражнений плана: части суперсетов разворачиваются с меткой «5А», «5Б».
+// Плоский список пунктов плана с номерами, как на экране: части суперсетов разворачиваются в «5А», «5Б»,
+// у разминки и заминки stage: true (подходов у них нет).
 function flatExercises(plan) {
   const out = [];
-  (plan.exercises || []).filter(ex => !isStage(ex)).forEach((ex, i) => {
-    if (isSuperset(ex)) ex.parts.forEach((p, j) => out.push({ ex: { ...p, sets: ex.sets, rest_sec: p.rest_sec ?? ex.rest_sec }, tag: `${i + 1}${SS_LABELS[j]}`, ss: ex }));
+  planList(plan).forEach((ex, i) => {
+    if (isStage(ex)) out.push({ ex, tag: String(i + 1), ss: null, stage: true });
+    else if (isSuperset(ex)) ex.parts.forEach((p, j) => out.push({ ex: { ...p, sets: ex.sets, rest_sec: p.rest_sec ?? ex.rest_sec }, tag: `${i + 1}${SS_LABELS[j]}`, ss: ex }));
     else out.push({ ex, tag: String(i + 1), ss: null });
   });
   return out;
@@ -605,9 +611,9 @@ function viewToday() {
     const restHtml = after ? `<div class="rest-after">⏸ Отдых <b>${fmtRest(after)}</b></div>` : '';
     if (isStage(ex)) {
       html += `<div class="ex-card">
-        <div class="ex-num stage">${ex.kind === 'warmup' ? '🔥' : '🧘'}</div>
+        <div class="ex-num">${it.num}</div>
         <div>
-          <div class="row"><span class="ex-name grow">${esc(ex.name || (ex.kind === 'warmup' ? 'Разминка' : 'Заминка'))}</span>${time}</div>
+          <div class="row"><span class="ex-name grow">${ex.kind === 'warmup' ? '🔥' : '🧘'} ${esc(stageName(ex))}</span>${time}</div>
           <div class="small muted">${esc(num(ex.duration_min) || 5)} мин</div>
           ${ex.notes ? `<div class="small" style="margin-top:4px">${esc(ex.notes)}</div>` : ''}
         </div>
@@ -683,7 +689,7 @@ function newDraftFromPlan(status = 'done') {
     status,
     planId: plan ? plan.id : null,
     title: plan ? plan.title : 'Тренировка',
-    exercises: plan ? flatExercises(plan).map(({ ex, tag, ss }) => ({
+    exercises: plan ? flatExercises(plan).filter(f => !f.stage).map(({ ex, tag, ss }) => ({
       name: ex.name, unit: ex.unit || 'reps',
       ...(ss ? { superset: tag } : {}),
       planned: { text: planText(ex), rpe: ex.rpe ?? null },
@@ -1082,8 +1088,9 @@ function buildPrompt(count) {
   if (plan) {
     const used = state.history.some(h => h.planId === plan.id);
     L.push(`## Последний выданный план (${plan.date || 'без даты'}${used ? '' : ', ещё не выполнен'}): «${plan.title || ''}», ~${fmtMin(planItems(plan).total)} мин по расчёту приложения`);
-    // Номера те же, что на экране и в картинке плана: 1, 2…, части суперсета — 5А, 5Б.
-    (plan.exercises || []).filter(ex => !isStage(ex)).forEach((ex, i) => {
+    // Номера те же, что на экране и в картинке плана: 1 — разминка, 2…, части суперсета — 5А, 5Б, последний — заминка.
+    planList(plan).forEach((ex, i) => {
+      if (isStage(ex)) return L.push(`${i + 1}. ${stageName(ex)}, ${num(ex.duration_min) || 5} мин${ex.notes ? `: ${ex.notes}` : ''}`);
       if (!isSuperset(ex)) return L.push(`${i + 1}. ${ex.name}: ${planLine(ex)}`);
       L.push(`${i + 1}. Суперсет${ex.name ? ` «${ex.name}»` : ''} (${supersetHead(ex)}):`);
       ex.parts.forEach((p, j) => L.push(`   ${i + 1}${SS_LABELS[j]}. ${p.name}: ${planLine({ ...p, sets: ex.sets, rest_sec: null })}`));
@@ -1095,7 +1102,7 @@ function buildPrompt(count) {
   const report = (ui.report || '').trim();
   if (report) {
     L.push(`## Как прошла тренировка (мой текст, как есть)`);
-    L.push(`Пишу свободно. Номера упражнений — из последнего выданного плана выше (1, 2…, части суперсета 5А, 5Б). Здесь же мои пожелания к следующей тренировке и то, на чём я настаиваю.`);
+    L.push(`Пишу свободно. Номера упражнений — из последнего выданного плана выше (1 — разминка, дальше 2, 3…, части суперсета 5А, 5Б, последний номер — заминка). Здесь же мои пожелания к следующей тренировке и то, на чём я настаиваю.`);
     L.push('"""');
     L.push(report);
     L.push('"""');
@@ -1207,9 +1214,9 @@ function buildPrompt(count) {
       date: 'YYYY-MM-DD',
       status: 'done | skipped | sick',
       exercises: [
-        { tag: '1', as_planned: true, rpe: 85, notes: '' },
-        { tag: '2', rpe: 95, notes: 'последний подход тяжело', sets: [{ weight: 40, reps: 10, warmup: true }, { weight: 80, reps: 6 }, { weight: 80, reps: 6 }, { weight: 80, reps: 5 }] },
-        { tag: '4', skipped: true, notes: 'не успел' },
+        { tag: '2', as_planned: true, rpe: 85, notes: '' },
+        { tag: '3', rpe: 95, notes: 'последний подход тяжело', sets: [{ weight: 40, reps: 10, warmup: true }, { weight: 80, reps: 6 }, { weight: 80, reps: 6 }, { weight: 80, reps: 5 }] },
+        { tag: '5', skipped: true, notes: 'не успел' },
         { tag: null, name: 'Упражнение не из плана', unit: 'reps', sets: [{ weight: 30, reps: 15 }, { weight: 30, reps: 15 }] }
       ],
       wellbeing: 4, effort: 85, duration: 65, sleep: 7, bodyweight: 76.4,
@@ -1247,9 +1254,9 @@ function buildPrompt(count) {
     }
   }, null, 2));
   L.push('```');
-  L.push(`Правила для JSON: weight — число в кг (0 = собственный вес, null = вес подобрать на месте; для гантелей — вес одной гантели); reps — число или строка-диапазон ("8-10"); unit — "reps" или "sec"; rpe — целевая тяжесть в процентах (50–100); rest_sec — отдых между подходами; суперсет — отдельный пункт с type "superset": rounds — число кругов, rest_sec — отдых после круга, parts — упражнения, которые делаются подряд без отдыха (в истории они помечены как «суперсет 5А/5Б»); sets_detail — необязательный полный список подходов, когда веса/повторы различаются или есть разминочные подходы (warmup: true), тогда sets = число рабочих подходов; change — коротко, что изменилось относительно прошлого раза ("+2.5 кг", "+1 повтор", "−1 подход", "новое", "без изменений"). Используй те же названия упражнений, что и в истории, чтобы я мог отслеживать прогресс. Разминка и заминка — первый и последний пункты exercises с kind "warmup"/"cooldown" и duration_min. Время тренировки приложение считает само: подход ≈ 3 сек на повтор + 10 сек (30–90 сек), разминочный подход + 1 мин отдыха, rest_sec между рабочими подходами, rest_between_exercises_sec между упражнениями, переход между частями суперсета 15 сек, плюс разминка и заминка. Подбирай подходы и отдых так, чтобы по этому расчёту тренировка была около ориентира по длительности. wishes_review — по одному пункту на каждое моё пожелание (пустой массив, если пожеланий нет); decision — строго одно из четырёх значений.`);
+  L.push(`Правила для JSON: weight — число в кг (0 = собственный вес, null = вес подобрать на месте; для гантелей — вес одной гантели); reps — число или строка-диапазон ("8-10"); unit — "reps" или "sec"; rpe — целевая тяжесть в процентах (50–100); rest_sec — отдых между подходами; суперсет — отдельный пункт с type "superset": rounds — число кругов, rest_sec — отдых после круга, parts — упражнения, которые делаются подряд без отдыха (в истории они помечены как «суперсет 5А/5Б»); sets_detail — необязательный полный список подходов, когда веса/повторы различаются или есть разминочные подходы (warmup: true), тогда sets = число рабочих подходов; change — коротко, что изменилось относительно прошлого раза ("+2.5 кг", "+1 повтор", "−1 подход", "новое", "без изменений"). Используй те же названия упражнений, что и в истории, чтобы я мог отслеживать прогресс. Разминка и заминка — первый и последний пункты exercises с kind "warmup"/"cooldown" и duration_min; в нумерации плана они тоже считаются (разминка — №1, заминка — последний номер). Время тренировки приложение считает само: подход ≈ 3 сек на повтор + 10 сек (30–90 сек), разминочный подход + 1 мин отдыха, rest_sec между рабочими подходами, rest_between_exercises_sec между упражнениями, переход между частями суперсета 15 сек, плюс разминка и заминка. Подбирай подходы и отдых так, чтобы по этому расчёту тренировка была около ориентира по длительности. wishes_review — по одному пункту на каждое моё пожелание (пустой массив, если пожеланий нет); decision — строго одно из четырёх значений.`);
   L.push(`Правила для profile_update: это твои правки в разделе «Обо мне» — ты мой тренер и ведёшь эти данные. Поля: ${PROFILE_FIELDS.map(([k, l]) => `${k} (${l.toLowerCase()})`).join(', ')}, а также session_minutes — ориентир длительности числом. Значение поля — полный новый текст, он заменит старый целиком, поэтому сохрани из старого всё, что остаётся верным. recommendations — твои постоянные рекомендации, которые должны действовать во всех следующих тренировках (отдых, техника, восстановление, питание); то, что касается только следующей тренировки, пиши в recommendation. Включай только изменившиеся поля, а когда менять нечего — не включай profile_update вообще. Меняй, когда для этого есть причина: я сообщил о новой боли или травме, ограничение снято, сменились расписание или цель, ты выработал правило по отдыху. reason — коротко, почему меняешь.`);
-  if (report) L.push(`Правила для completed_workout: это запись о тренировке из моего текста, приложение сохранит её в историю без ручной правки, поэтому ничего не выдумывай. date — дата тренировки (если не сказано, сегодня). status: "done" — тренировка была (хотя бы частично), "skipped" — пропуск, "sick" — болезнь; для skipped/sick причина в reason, exercises пустой. В exercises — каждое упражнение плана по номеру tag ("2", "5А"; у суперсета — каждая часть отдельно), название и план приложение подставит само по номеру. as_planned: true — сделано как в плане (и если я про упражнение ничего не сказал — тоже as_planned, но отметь это в assumptions). Если что-то отличалось — sets: полный список фактически сделанных подходов {weight, reps, warmup?, done?}, подходы, которые я не сделал, не включай. skipped: true — упражнение не делал. Упражнение не из плана — tag null и name (то же название, что в истории, если оно там есть). rpe — тяжесть упражнения в процентах, только если я её назвал или явно описал (например, «до отказа» = 100). wellbeing — самочувствие 1–5, effort — общая тяжесть тренировки в %, duration — минуты, sleep — часы сна, bodyweight — кг; чего нет в тексте — null. wishes — мои пожелания к следующей тренировке из текста, insist — true, если я на них настаиваю (см. «Мои пожелания»); эти пожелания тоже отрази в wishes_review. Если в тексте нет описания тренировки, а есть только пожелания, — не включай completed_workout, а пожелания верни отдельным полем верхнего уровня request: { "text": "...", "insist": true|false }. assumptions — всё, что пришлось додумать или что могло быть понято двояко (пустой массив, если всё ясно).`);
+  if (report) L.push(`Правила для completed_workout: это запись о тренировке из моего текста, приложение сохранит её в историю без ручной правки, поэтому ничего не выдумывай. date — дата тренировки (если не сказано, сегодня). status: "done" — тренировка была (хотя бы частично), "skipped" — пропуск, "sick" — болезнь; для skipped/sick причина в reason, exercises пустой. В exercises — каждое упражнение плана по номеру tag ("2", "5А"; у суперсета — каждая часть отдельно), название и план приложение подставит само по номеру. Разминку и заминку (первый и последний номера) в exercises не включай; если я про них что-то написал (пропустил, сократил), отметь это в общих notes записи. as_planned: true — сделано как в плане (и если я про упражнение ничего не сказал — тоже as_planned, но отметь это в assumptions). Если что-то отличалось — sets: полный список фактически сделанных подходов {weight, reps, warmup?, done?}, подходы, которые я не сделал, не включай. skipped: true — упражнение не делал. Упражнение не из плана — tag null и name (то же название, что в истории, если оно там есть). rpe — тяжесть упражнения в процентах, только если я её назвал или явно описал (например, «до отказа» = 100). wellbeing — самочувствие 1–5, effort — общая тяжесть тренировки в %, duration — минуты, sleep — часы сна, bodyweight — кг; чего нет в тексте — null. wishes — мои пожелания к следующей тренировке из текста, insist — true, если я на них настаиваю (см. «Мои пожелания»); эти пожелания тоже отрази в wishes_review. Если в тексте нет описания тренировки, а есть только пожелания, — не включай completed_workout, а пожелания верни отдельным полем верхнего уровня request: { "text": "...", "insist": true|false }. assumptions — всё, что пришлось додумать или что могло быть понято двояко (пустой массив, если всё ясно).`);
   return L.join('\n');
 }
 
@@ -1265,7 +1272,7 @@ function viewClaude() {
     <label class="f">Как прошла тренировка (необязательно)
       <textarea id="reportText" style="min-height:160px" placeholder="Своими словами, в любом виде: по номерам упражнений, веса, повторы, ощущения, самочувствие, сон, вес тела. Если пропустили или заболели — напишите и это. Здесь же пожелания к следующей тренировке; то, на чём настаиваете, отметьте словом «настаиваю» или «важно».">${esc(ui.report || '')}</textarea></label>
     ${flat.length ? `<details class="small" style="margin:-4px 0 10px"><summary>Номера упражнений в плане «${esc(plan.title || 'План')}»</summary>
-      <div style="margin-top:4px">${flat.map(({ ex, tag }) => `<div><b>${esc(tag)}.</b> ${esc(ex.name)} <span class="muted">— ${esc(planText(ex))}</span></div>`).join('')}</div></details>` : ''}
+      <div style="margin-top:4px">${flat.map(({ ex, tag, stage }) => `<div><b>${esc(tag)}.</b> ${esc(stage ? stageName(ex) : ex.name)} <span class="muted">— ${esc(stage ? `${num(ex.duration_min) || 5} мин` : planText(ex))}</span></div>`).join('')}</div></details>` : ''}
     <p class="small muted" style="margin-top:0">Claude разберёт описание в запись тренировки, приложение сохранит её в историю на шаге 2 вместе с новым планом. Без описания Claude вернёт только план. Пожелания Claude сначала оценит: что эффективно и безопасно, применит, что нет — подсветит и предложит альтернативу. То, на чём вы настаиваете, применит в любом случае и предупредит о рисках.</p>
     <div class="row small" style="margin-bottom:8px">
       <span>Подробно последние</span>
@@ -1378,6 +1385,7 @@ function normalizeLog(c, plan) {
   });
   const exercises = status !== 'done' ? [] : items.map(e => {
     const base = byTag[tagKey(e.tag)] || null;
+    if (base && base.stage) return null;   // разминка/заминка — без подходов, в историю не пишем
     const name = String((base && base.ex.name) || e.name || '').trim();
     if (!name) return null;
     const own = Array.isArray(e.sets) && e.sets.length ? e.sets : null;
@@ -1631,7 +1639,7 @@ function planAsText(plan) {
     const ex = it.ex, when = `[${fmtMin(it.start)}–${fmtMin(it.end)} мин]`;
     L.push('');
     if (isStage(ex)) {
-      L.push(`${ex.kind === 'warmup' ? '🔥' : '🧘'} ${ex.name || (ex.kind === 'warmup' ? 'Разминка' : 'Заминка')} ${when}`);
+      L.push(`${it.num}. ${ex.kind === 'warmup' ? '🔥' : '🧘'} ${stageName(ex)} ${when}`);
       if (ex.notes) L.push(`   ${ex.notes}`);
       continue;
     }
@@ -1791,7 +1799,7 @@ function planImageBlob(plan) {
       const card = (d) => {
         const P = pen(d, y0 + pad);
         if (isStage(ex)) {
-          P.T(`${ex.name || (ex.kind === 'warmup' ? 'Разминка' : 'Заминка')} · ${num(ex.duration_min) || 5} мин`, 34, 700, C.text, x, w, 1.25); P.y += 4;
+          P.T(`${ex.kind === 'warmup' ? '🔥' : '🧘'} ${stageName(ex)} · ${num(ex.duration_min) || 5} мин`, 34, 700, C.text, x, w, 1.25); P.y += 4;
           P.T(when, 23, 600, C.accent, x, w); P.y += 6;
           if (ex.notes) P.T(ex.notes, 24, 400, C.text2, x, w, 1.4);
           return P.y + pad;
@@ -1841,7 +1849,7 @@ function planImageBlob(plan) {
         roundRect(PAD, y0, inner, h, 20, C.card, C.border);
         ctx.beginPath(); ctx.arc(PAD + pad + 26, y0 + pad + 24, 26, 0, Math.PI * 2); ctx.fillStyle = C.accentSoft; ctx.fill();
         ctx.font = font(26, 700); ctx.fillStyle = C.accent; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(it.num ? String(it.num) : ex.kind === 'warmup' ? '🔥' : '🧘', PAD + pad + 26, y0 + pad + 25); ctx.textAlign = 'left';
+        ctx.fillText(String(it.num), PAD + pad + 26, y0 + pad + 25); ctx.textAlign = 'left';
         card(true);
       }
       y = y0 + h + 16;
