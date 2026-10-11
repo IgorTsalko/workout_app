@@ -65,7 +65,7 @@ body {
   font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 header.top {
-  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10;
+  position: sticky; top: 0; z-index: 10;
   background: var(--surface); border-bottom: 1px solid var(--border);
 }
 .top-inner { max-width: 920px; margin: 0 auto; padding: 10px 16px 0; }
@@ -184,44 +184,6 @@ pre.prompt {
   font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 50; max-width: calc(100% - 32px);
 }
 .toast.show { opacity: 1; }
-/* Тренер: чат слева, черновик плана и проверки справа; на телефоне — друг под другом */
-.coach { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 14px; align-items: start; }
-.coach-main { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
-.coach-panel { min-width: 0; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 96px); max-height: calc(100vh - 110px); overflow: auto; }
-.chat-log { display: flex; flex-direction: column; gap: 10px; }
-.chat-empty { background: var(--surface); border: 1px dashed var(--border); border-radius: var(--radius); padding: 14px 16px; }
-.chat-empty p { margin: 0 0 8px; }
-.msg { display: flex; flex-direction: column; gap: 4px; max-width: 100%; }
-.msg .bubble { padding: 9px 12px; border-radius: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.msg.user { flex-direction: row; justify-content: flex-end; align-items: flex-start; gap: 6px; }
-.msg.user .bubble { background: var(--accent-soft); color: var(--text); border-bottom-right-radius: 4px; max-width: 88%; }
-.msg.coach-msg .bubble { background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
-.msg.app { align-self: center; font-size: 12.5px; color: var(--text-2); background: var(--surface-2); padding: 5px 10px; border-radius: 8px; white-space: pre-wrap; text-align: center; }
-.msg.app.auto { text-align: left; align-self: stretch; }
-.msg.app.auto summary { cursor: pointer; }
-.mini-link { color: var(--text-2); }
-.msg.app.bad { color: var(--bad); background: var(--bad-soft); }
-.msg .flag { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 15px; padding: 6px 2px; }
-.msg .flag:hover, .msg .flag:focus-visible { color: var(--warn); }
-.notes { margin: 0; padding: 6px 10px 6px 26px; font-size: 12.5px; color: var(--text-2); background: var(--surface-2); border-radius: 8px; font-variant-numeric: tabular-nums; }
-.notes li { margin: 1px 0; overflow-wrap: anywhere; }
-.composer { position: sticky; bottom: env(safe-area-inset-bottom, 0px); background: var(--bg); padding-block: 6px; display: flex; flex-direction: column; gap: 6px; }
-.composer textarea { min-height: 84px; }
-.chk { font-size: 13px; padding: 3px 0; }
-.chk.bad { color: var(--bad); } .chk.warn { color: var(--warn); } .chk.good { color: var(--good); }
-table.bal td, table.bal th { font-variant-numeric: tabular-nums; }
-table.bal tr.low td { color: var(--bad); }
-table.bal tr.skip td { color: var(--muted); }
-table.bal tr.tradeoff td:first-child { color: var(--warn); }
-.btn:disabled { opacity: .5; cursor: default; }
-.btn:focus-visible, .flag:focus-visible, nav.tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-@media (max-width: 820px) {
-  .coach { grid-template-columns: minmax(0, 1fr); }
-  .coach-panel { position: static; max-height: none; overflow: visible; }
-}
-.modal { position: fixed; inset: 0; z-index: 60; background: color-mix(in srgb, var(--text) 35%, transparent); display: grid; place-items: center; padding: 16px; }
-.modal-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; width: min(520px, 100%); max-height: 90vh; overflow: auto; }
-.modal-msg { white-space: pre-wrap; }
 .empty { text-align: center; padding: 30px 16px; }
 .empty p { color: var(--text-2); }
 /* attendance */
@@ -343,7 +305,7 @@ const PROFILE_LABELS = { ...Object.fromEntries(PROFILE_FIELDS), sessionMinutes: 
 const TIME_SLACK_MIN = 5;
 
 function emptyState() {
-  return { version: 2, plans: [], history: [], requests: [], profileEdits: {}, profileLog: [], rules: [], muscleMap: {}, coach: null };
+  return { version: 2, plans: [], history: [], requests: [], profileEdits: {}, profileLog: [] };
 }
 
 function safeGet(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
@@ -364,84 +326,7 @@ function loadState() {
 }
 
 let state = loadState(); // null при первом запуске — заполняется стартовыми данными перед render()
-function save() { safeSet(STORE_KEY, JSON.stringify(state)); ghSchedule(); cloudSchedule(); }
-
-/* =====================================================================
-   Страница на claude.ai: данные в хранилище claude.ai (капабилити db), тренер — через капабилити sample.
-   Тот же файл, открытый локально, работает как раньше: localStorage и копирование промпта.
-   ===================================================================== */
-const IN_CLAUDE = !!(window.claude && typeof window.claude.use === 'function');
-const ARTIFACT_URL = 'https://claude.ai/artifact/H5pB77R9PJ9rpRKe5eFiWS';
-const capCache = {};
-function capability(name) {
-  if (!IN_CLAUDE) return Promise.resolve(null);
-  return capCache[name] || (capCache[name] = window.claude.use(name).catch(() => null));
-}
-// Раскладка по документам: app/meta — профиль, правила, разметка мышц; history/<id>, plans/<id> — по записи на документ;
-// coach/session — текущий разговор с тренером. Документ не больше 256 КБ, поэтому историю и планы не складываем в один.
-const cloud = { db: null, status: IN_CLAUDE ? 'loading' : 'local', synced: {}, timer: null, busy: false, again: false, error: '' };
-function cloudDocs(st) {
-  const docs = {
-    'app/meta': { version: st.version || 2, requests: st.requests || [], profileEdits: st.profileEdits || {},
-      profileLog: (st.profileLog || []).slice(-300), rules: st.rules || [], muscleMap: st.muscleMap || {} }
-  };
-  for (const h of st.history || []) docs[`history/${h.id}`] = h;
-  for (const p of st.plans || []) docs[`plans/${p.id}`] = p;
-  if (st.coach) docs['coach/session'] = { ...st.coach, messages: (st.coach.messages || []).slice(-80) };
-  return docs;
-}
-function cloudSchedule() {
-  if (cloud.status !== 'ready') return;
-  clearTimeout(cloud.timer); cloud.timer = setTimeout(cloudSync, 600);
-}
-async function cloudSync() {
-  if (cloud.status !== 'ready') return;
-  if (cloud.busy) { cloud.again = true; return; }
-  cloud.busy = true;
-  try {
-    const docs = cloudDocs(state);
-    for (const [path, body] of Object.entries(docs)) {
-      const json = JSON.stringify(body);
-      if (cloud.synced[path] === json) continue;
-      await cloud.db.doc(path).set(JSON.parse(json));
-      cloud.synced[path] = json;
-    }
-    for (const path of Object.keys(cloud.synced)) {
-      if (docs[path]) continue;
-      await cloud.db.doc(path).delete();
-      delete cloud.synced[path];
-    }
-    cloud.error = '';
-  } catch (e) {
-    cloud.error = e && e.code === 'quota_exceeded' ? 'Хранилище claude.ai заполнено' : 'Не удалось сохранить на claude.ai';
-    toast(`${cloud.error} — данные остались в этом браузере, попробуем при следующем сохранении`);
-  } finally {
-    cloud.busy = false;
-    if (cloud.again) { cloud.again = false; cloudSchedule(); }
-  }
-}
-async function cloudLoad() {
-  const db = await capability('db');
-  if (!db) { cloud.status = 'off'; return null; }
-  cloud.db = db;
-  const [meta, hist, plans, coach] = await Promise.all([
-    db.doc('app/meta').get(), db.collection('history').limit(1000).get(), db.collection('plans').limit(1000).get(), db.doc('coach/session').get()
-  ]);
-  const body = (d) => JSON.parse(JSON.stringify(d.data()));
-  const remote = {
-    ...emptyState(),
-    ...(meta.exists ? body(meta) : {}),
-    history: hist.docs.map(body), plans: plans.docs.map(body).sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '')),
-    coach: coach.exists ? body(coach) : null
-  };
-  // Что уже лежит на claude.ai, повторно не пишем.
-  if (meta.exists) cloud.synced['app/meta'] = JSON.stringify(cloudDocs(remote)['app/meta']);
-  for (const d of hist.docs) cloud.synced[`history/${d.id}`] = JSON.stringify(body(d));
-  for (const d of plans.docs) cloud.synced[`plans/${d.id}`] = JSON.stringify(body(d));
-  if (coach.exists) cloud.synced['coach/session'] = JSON.stringify(cloudDocs(remote)['coach/session']);
-  cloud.status = 'ready';
-  return meta.exists || hist.size || plans.size ? remote : null;
-}
+function save() { safeSet(STORE_KEY, JSON.stringify(state)); ghSchedule(); }
 
 let ui = { tab: 'today', promptCount: 6, progressEx: '' };
 try { Object.assign(ui, JSON.parse(safeGet(UI_KEY) || '{}')); } catch (e) {}
@@ -457,21 +342,14 @@ function undoHtml() {
   const u = getUndo();
   if (!u) return '';
   const t = new Date(u.at);
-  const when = `${t.getDate()} ${MONTHS[t.getMonth()]}, ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
-  return `<div class="callout no-print" style="margin-bottom:12px"><div class="row"><span class="grow small">${u.coach
-    ? `Разговор с тренером (с ${when}) изменил данные: тренировка, план, «Обо мне» или правила. Если что-то не так — откатите.`
-    : `Загружен ответ тренера${u.what ? `: ${esc(u.what)}` : ''} · ${when}. Проверьте; если что-то не так — откатите.`}</span>
-    <button class="btn sm" data-act="undo-import">↶ ${u.coach ? 'Откатить изменения' : 'Откатить загрузку'}</button></div></div>`;
+  return `<div class="callout no-print" style="margin-bottom:12px"><div class="row"><span class="grow small">Загружен ответ тренера${u.what ? `: ${esc(u.what)}` : ''} · ${t.getDate()} ${MONTHS[t.getMonth()]}, ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}. Проверьте; если что-то не так — откатите.</span>
+    <button class="btn sm" data-act="undo-import">↶ Откатить загрузку</button></div></div>`;
 }
-async function undoImport() {
+function undoImport() {
   const u = getUndo();
   if (!u) return;
-  if (!await ask(u.coach
-    ? 'Вернуть данные к состоянию до этого разговора с тренером? Запись о тренировке, принятый план, правки «Обо мне» и новые правила из разговора удалятся. Сам разговор останется.'
-    : 'Вернуть данные к состоянию до последней загрузки ответа тренера? Запись о тренировке, новый план и правки «Обо мне» из этого ответа удалятся, описание тренировки вернётся в поле. Изменения, сделанные после загрузки, тоже пропадут.', { ok: 'Откатить' })) return;
-  const keepCoach = u.coach && state.coach ? { ...state.coach, workoutId: null, acceptedPlanId: null, undoTaken: false } : null;
+  if (!confirm('Вернуть данные к состоянию до последней загрузки ответа тренера? Запись о тренировке, новый план и правки «Обо мне» из этого ответа удалятся, описание тренировки вернётся в поле. Изменения, сделанные после загрузки, тоже пропадут.')) return;
   try { state = { ...emptyState(), ...JSON.parse(u.state) }; } catch (e) { toast('Не удалось откатить: снимок повреждён'); return; }
-  if (u.coach) state.coach = keepCoach;
   save();
   ui.report = u.report || ''; ui.lastImport = ''; saveUi();
   safeDel(UNDO_KEY);
@@ -577,7 +455,7 @@ async function ghConnect() {
     gh.sha = remote ? await ghRemoteSha() : '';
     saveGh();
     if (remote && Array.isArray(remote.history) && hashStr(JSON.stringify(remote, null, 2)) !== hashStr(backupJson())) {
-      if (await ask(`В репозитории уже есть бэкап: ${remote.history.length} записей, ${remote.plans?.length ?? 0} планов (здесь: ${state.history.length} и ${state.plans.length}).\n\n«ОК» — взять данные из GitHub.\n«Отмена» — оставить данные этого браузера и записать их в GitHub (прошлая версия останется в истории репозитория).`)) {
+      if (confirm(`В репозитории уже есть бэкап: ${remote.history.length} записей, ${remote.plans?.length ?? 0} планов (здесь: ${state.history.length} и ${state.plans.length}).\n\n«ОК» — взять данные из GitHub.\n«Отмена» — оставить данные этого браузера и записать их в GitHub (прошлая версия останется в истории репозитория).`)) {
         ghApplyRemote(remote); return;
       }
     }
@@ -599,7 +477,7 @@ async function ghRestore() {
   try {
     const remote = await ghReadRemote();
     if (!remote || !Array.isArray(remote.history) || !Array.isArray(remote.plans)) { toast('В репозитории нет бэкапа этого приложения'); return; }
-    if (!await ask(`Восстановить из GitHub ${remote.history.length} записей и ${remote.plans.length} планов? Текущие данные будут заменены.`)) return;
+    if (!confirm(`Восстановить из GitHub ${remote.history.length} записей и ${remote.plans.length} планов? Текущие данные будут заменены.`)) return;
     gh.sha = await ghRemoteSha();
     ghApplyRemote(remote);
   } catch (e) { toast(e.message === 'Failed to fetch' ? 'Нет связи с GitHub' : e.message); }
@@ -674,35 +552,6 @@ function toast(msg) {
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 2600);
 }
-// Подтверждение и ввод текста — своим окном: на claude.ai confirm() и prompt() не работают.
-function modal(bodyHtml, buttons) {
-  return new Promise(resolve => {
-    const wrap = document.createElement('div');
-    wrap.className = 'modal';
-    wrap.innerHTML = `<div class="modal-box" role="dialog" aria-modal="true">${bodyHtml}
-      <div class="row" style="justify-content:flex-end;margin-top:12px">${buttons.map((b, k) =>
-        `<button class="btn ${b.cls || ''}" data-k="${k}">${esc(b.label)}</button>`).join('')}</div></div>`;
-    const done = (v) => { wrap.remove(); document.removeEventListener('keydown', onKey); resolve(v); };
-    const onKey = (e) => { if (e.key === 'Escape') done(null); };
-    wrap.addEventListener('click', (e) => {
-      const b = e.target.closest('button[data-k]');
-      if (b) done(buttons[+b.dataset.k].value(wrap));
-      else if (e.target === wrap) done(null);
-    });
-    document.addEventListener('keydown', onKey);
-    document.body.appendChild(wrap);
-    (wrap.querySelector('textarea, input') || wrap.querySelector('.btn.primary') || wrap.querySelector('button')).focus();
-  });
-}
-async function ask(message, { ok = 'ОК', cancel = 'Отмена', danger = false } = {}) {
-  const v = await modal(`<div class="modal-msg">${esc(message)}</div>`,
-    [{ label: cancel, value: () => false }, { label: ok, cls: danger ? 'danger' : 'primary', value: () => true }]);
-  return v === true;
-}
-async function askText(label, value = '', { ok = 'Сохранить' } = {}) {
-  return modal(`<label class="f" style="margin:0">${esc(label)}<textarea id="modalText" style="min-height:120px">${esc(value)}</textarea></label>`,
-    [{ label: 'Отмена', value: () => null }, { label: ok, cls: 'primary', value: (w) => w.querySelector('#modalText').value }]);
-}
 const currentPlan = () => state.plans[state.plans.length - 1] || null;
 const sortedHistory = () => [...state.history].sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || '').localeCompare(a.createdAt || ''));
 
@@ -714,15 +563,7 @@ async function copyText(text) {
     ta.remove(); return ok;
   }
 }
-async function download(filename, data, type = 'text/plain') {
-  // На claude.ai страница не может скачать файл сама — сохраняем через капабилити downloads (зритель подтверждает).
-  const dl = IN_CLAUDE ? await capability('downloads') : null;
-  if (dl) {
-    try { await dl.save({ filename, data: data instanceof Blob ? data : new Blob([data], { type: type + ';charset=utf-8' }) }); }
-    catch (e) { if (e && e.code !== 'cancelled' && e.code !== 'declined') toast('Не удалось сохранить файл'); }
-    return;
-  }
-  if (IN_CLAUDE) { toast('Сохранение файлов здесь недоступно'); return; }
+function download(filename, data, type = 'text/plain') {
   const blob = data instanceof Blob ? data : new Blob([data], { type: type + ';charset=utf-8' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename;
   document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
@@ -735,7 +576,6 @@ function setTab(tab) { ui.tab = tab; saveUi(); render(); window.scrollTo(0, 0); 
 $('#tabs').addEventListener('click', (e) => { const b = e.target.closest('button[data-tab]'); if (b) setTab(b.dataset.tab); });
 
 function render() {
-  if (!state) return;
   if (ui.tab === 'log' && !(draft && draft.id)) ui.tab = 'claude';
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === ui.tab));
   const active = $('#tabs button.active'); if (active) active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
@@ -874,60 +714,6 @@ function changeBadge(change) {
   return `<span class="badge ${cls}">${esc(change)}</span>`;
 }
 
-// Карточки плана по ходу тренировки: на «Сегодня» и в черновике тренера.
-function planTimelineHtml(timeline, compact = false) {
-  let html = '';
-  for (const it of timeline.items) {
-    const ex = it.ex;
-    const time = `<span class="badge time">⏱ ${fmtMin(it.start)}–${fmtMin(it.end)} мин</span>`;
-    const after = restAfter(it);
-    const restHtml = after ? `<div class="rest-after">⏸ Отдых <b>${fmtRest(after)}</b></div>` : '';
-    if (isStage(ex)) {
-      html += `<div class="ex-card">
-        <div class="ex-num">${it.num}</div>
-        <div>
-          <div class="row"><span class="ex-name grow">${ex.kind === 'warmup' ? '🔥' : '🧘'} ${esc(stageName(ex))}</span>${time}</div>
-          <div class="small muted">${esc(num(ex.duration_min) || 5)} мин</div>
-          ${ex.notes ? `<div class="small" style="margin-top:4px">${esc(ex.notes)}</div>` : ''}
-        </div>
-      </div>`;
-      continue;
-    }
-    if (isSuperset(ex)) {
-      html += `<div class="ex-card">
-        <div class="ex-num">${it.num}</div>
-        <div>
-          <div class="row"><span class="ex-name grow">Суперсет${ex.name ? `: ${esc(ex.name)}` : ''}</span>${changeBadge(ex.change)}${time}</div>
-          <div class="ss-head">↻ ${esc(supersetHead(ex))}</div>
-          ${ex.parts.map((p, j) => `${j ? '<div class="ss-link">↓ сразу, без отдыха</div>' : ''}
-          <div class="ss-part">
-            <div class="ss-label">${SS_LABELS[j]}</div>
-            <div>
-              <div class="row"><span class="ex-name grow">${esc(p.name)}</span>${changeBadge(p.change)}</div>
-              ${schemeHtml({ ...p, sets: ex.sets }, false)}
-              ${p.rpe ? `<div class="small muted">Целевое RPE ${fmtRpe(p.rpe)}</div>` : ''}
-              ${p.notes ? `<div class="small" style="margin-top:4px">${esc(p.notes)}</div>` : ''}
-            </div>
-          </div>`).join('')}
-          ${ex.notes ? `<div class="small" style="margin-top:6px">${esc(ex.notes)}</div>` : ''}
-          ${restHtml}
-        </div>
-      </div>`;
-      continue;
-    }
-    html += `<div class="ex-card">
-      <div class="ex-num">${it.num}</div>
-      <div>
-        <div class="row"><span class="ex-name grow">${esc(ex.name)}</span>${changeBadge(ex.change)}${time}</div>
-        ${schemeHtml(ex)}
-        ${ex.rpe ? `<div class="small muted">Целевое RPE ${fmtRpe(ex.rpe)}</div>` : ''}
-        ${ex.notes ? `<div class="small" style="margin-top:6px">${esc(ex.notes)}</div>` : ''}
-        ${restHtml}
-      </div>
-    </div>`;
-  }
-  return html;
-}
 function viewToday() {
   const plan = currentPlan();
   const last = sortedHistory()[0];
@@ -992,7 +778,57 @@ function viewToday() {
     html += `<div class="card"><h3>❓ Ответы тренера</h3>${plan.answers.map(x => `<div class="wish"><b>${esc(x.question)}</b>
       <div class="small" style="margin-top:2px">${esc(x.answer)}</div></div>`).join('')}</div>`;
   }
-  html += `<div class="card"><h3>Ход тренировки</h3>${planTimelineHtml(timeline)}</div>`;
+  html += `<div class="card"><h3>Ход тренировки</h3>`;
+  for (const it of timeline.items) {
+    const ex = it.ex;
+    const time = `<span class="badge time">⏱ ${fmtMin(it.start)}–${fmtMin(it.end)} мин</span>`;
+    const after = restAfter(it);
+    const restHtml = after ? `<div class="rest-after">⏸ Отдых <b>${fmtRest(after)}</b></div>` : '';
+    if (isStage(ex)) {
+      html += `<div class="ex-card">
+        <div class="ex-num">${it.num}</div>
+        <div>
+          <div class="row"><span class="ex-name grow">${ex.kind === 'warmup' ? '🔥' : '🧘'} ${esc(stageName(ex))}</span>${time}</div>
+          <div class="small muted">${esc(num(ex.duration_min) || 5)} мин</div>
+          ${ex.notes ? `<div class="small" style="margin-top:4px">${esc(ex.notes)}</div>` : ''}
+        </div>
+      </div>`;
+      continue;
+    }
+    if (isSuperset(ex)) {
+      html += `<div class="ex-card">
+        <div class="ex-num">${it.num}</div>
+        <div>
+          <div class="row"><span class="ex-name grow">Суперсет${ex.name ? `: ${esc(ex.name)}` : ''}</span>${changeBadge(ex.change)}${time}</div>
+          <div class="ss-head">↻ ${esc(supersetHead(ex))}</div>
+          ${ex.parts.map((p, j) => `${j ? '<div class="ss-link">↓ сразу, без отдыха</div>' : ''}
+          <div class="ss-part">
+            <div class="ss-label">${SS_LABELS[j]}</div>
+            <div>
+              <div class="row"><span class="ex-name grow">${esc(p.name)}</span>${changeBadge(p.change)}</div>
+              ${schemeHtml({ ...p, sets: ex.sets }, false)}
+              ${p.rpe ? `<div class="small muted">Целевое RPE ${fmtRpe(p.rpe)}</div>` : ''}
+              ${p.notes ? `<div class="small" style="margin-top:4px">${esc(p.notes)}</div>` : ''}
+            </div>
+          </div>`).join('')}
+          ${ex.notes ? `<div class="small" style="margin-top:6px">${esc(ex.notes)}</div>` : ''}
+          ${restHtml}
+        </div>
+      </div>`;
+      continue;
+    }
+    html += `<div class="ex-card">
+      <div class="ex-num">${it.num}</div>
+      <div>
+        <div class="row"><span class="ex-name grow">${esc(ex.name)}</span>${changeBadge(ex.change)}${time}</div>
+        ${schemeHtml(ex)}
+        ${ex.rpe ? `<div class="small muted">Целевое RPE ${fmtRpe(ex.rpe)}</div>` : ''}
+        ${ex.notes ? `<div class="small" style="margin-top:6px">${esc(ex.notes)}</div>` : ''}
+        ${restHtml}
+      </div>
+    </div>`;
+  }
+  html += `</div>`;
   if (plan.notes) html += `<div class="card soft"><h3>📝 Заметки тренера</h3><div>${esc(plan.notes)}</div></div>`;
   html += `<div class="row no-print" style="margin-top:6px">
     <button class="btn primary" data-act="goto" data-tab="claude">Описать, как прошла тренировка</button>
@@ -1001,11 +837,11 @@ function viewToday() {
     <h3>📱 Взять план с собой</h3>
     <div class="row">
       <button class="btn" data-act="plan-png">🖼 Картинка (PNG)</button>
-      ${IN_CLAUDE ? '' : '<button class="btn" data-act="plan-pdf">📄 PDF / печать</button>'}
+      <button class="btn" data-act="plan-pdf">📄 PDF / печать</button>
       <button class="btn" data-act="plan-text">📋 Скопировать текстом</button>
-      ${!IN_CLAUDE && canShareFiles() ? '<button class="btn" data-act="plan-share">📤 Поделиться</button>' : ''}
+      ${canShareFiles() ? '<button class="btn" data-act="plan-share">📤 Поделиться</button>' : ''}
     </div>
-    <p class="small muted" style="margin-bottom:0">Картинку удобно сохранить в галерею телефона.${IN_CLAUDE ? '' : ' PDF: в окне печати выберите «Сохранить как PDF».'} Текст с чекбоксами ☐ подходит для «Заметок» или Telegram «Избранное».</p>
+    <p class="small muted" style="margin-bottom:0">Картинку удобно сохранить в галерею телефона. PDF: в окне печати выберите «Сохранить как PDF». Текст с чекбоксами ☐ подходит для «Заметок» или Telegram «Избранное».</p>
   </div>`;
   return html;
 }
@@ -1410,24 +1246,21 @@ function planLine(ex) {
   return parts.join(', ');
 }
 
-function buildPrompt(count, opts = {}) {
-  const chat = !!opts.chat;   // разговор в самом приложении: план правится инструментами, проверки считает код
+function buildPrompt(count) {
   const P = profile();
   const today = todayIso();
   const hist = sortedHistory();
   const recent = hist.slice(0, count);
   const older = hist.slice(count);
-  // В разговоре номера упражнений относятся к плану, по которому была прошедшая тренировка, даже если новый план уже принят.
-  const plan = chat ? (state.plans.find(p => p.id === session().basePlanId) || currentPlan()) : currentPlan();
+  const plan = currentPlan();
   const bw = latestBodyweight();
-  const report = chat ? '' : (ui.report || '').trim();
+  const report = (ui.report || '').trim();
   const L = [];
   L.push(`# Тренер`);
-  L.push(`Ты — мой персональный тренер по силовым тренировкам: опытный, требовательный, со своим мнением. Ты отвечаешь за мой результат, а не за то, чтобы я был доволен ответом. ${chat ? 'Мы говорим в чате моего приложения для тренировок. Ниже — мои данные, история, черновик плана, который я вижу на экране, проверки приложения, открытые замечания и твои постоянные правила; всё это свежее на каждый твой ответ.' : 'Ниже — мои данные, последний план, мой отчёт о прошедшей тренировке и история. Сначала мы обсуждаем следующую тренировку в этом чате, а итоговый JSON для приложения ты выдаёшь только по моей команде.'}`);
+  L.push(`Ты — мой персональный тренер по силовым тренировкам: опытный, требовательный, со своим мнением. Ты отвечаешь за мой результат, а не за то, чтобы я был доволен ответом. Ниже — мои данные, последний план, мой отчёт о прошедшей тренировке и история. Сначала мы обсуждаем следующую тренировку в этом чате, а итоговый JSON для приложения ты выдаёшь только по моей команде.`);
   L.push(`Главное: смотри на тренировку и неделю целиком. План собирается по шагам «Как подбирать план» — от недели к цифрам, — а не правкой прошлого плана. Обсуждение одного упражнения или одной проблемы не отменяет остальные мышечные группы: после любой правки план снова проходит проверку целиком.`);
   L.push(`Сегодня: ${today} (${WEEKDAYS[parseIso(today).getDay()]}).`);
   L.push('');
-  if (chat) coachWorkSection(L); else {
   L.push(`## Как мы работаем`);
   L.push(`**Этап 1 — твой первый ответ: разбор и предложение. Без JSON.** По порядку:`);
   L.push(`1. Разбор прошедшей тренировки по цифрам: что выросло, что встало, где не добрал и почему. Строго 2–5 предложений.`);
@@ -1446,7 +1279,6 @@ function buildPrompt(count, opts = {}) {
   L.push(`- JSON на этом этапе не выдавай, даже частично и даже «для примера».`);
   L.push(`**Этап 3 — финал.** Только когда я явно скажу «финал», «давай JSON», «формируй JSON» или так же однозначно попрошу итог для приложения, — ещё раз пройди проверку (шаг 7), затем выдай одну строку текста и один блок \`\`\`json по формату ниже, ровно с тем планом, о котором мы договорились. Если какой-то вопрос так и остался открытым, реши его сам и напиши об этом в warnings.`);
   L.push('');
-  }
   L.push(`## Каким тренером быть`);
   L.push(`- Не соглашайся, чтобы сделать мне приятно. Меняй решение только при новом аргументе или факте: боль, занятый или отсутствующий тренажёр, цифры из истории, ошибка в твоём расчёте. Если аргумента нет — держи позицию и коротко объясни почему: механика движения, нагрузка на мышцу, цифры.`);
   L.push(`- Оставляешь что-то по моему настоянию, а сам не согласен — так и пиши: «по настоянию», с риском. Не придумывай задним числом обоснование, под которым решение будто бы твоё. Позиция одна и та же в разборе, плане, warnings и wishes_review.`);
@@ -1475,7 +1307,7 @@ function buildPrompt(count, opts = {}) {
   L.push(`   - ничего из «Не предлагать», новых упражнений не больше двух, дублей нет;`);
   L.push(`   - каждое моё пожелание отражено;`);
   L.push(`   - темы, которые мы обсуждаем, не вытеснили остальное: перечитай план целиком, сверху вниз, по таблице баланса.`);
-  L.push(chat ? `Приложение проверяет каждую версию плана само (баланс групп, время, суперсеты, «Не предлагать», дубли, твои правила) и возвращает результат в ответ на set_plan.` : `Приложение при загрузке само проверяет дубли, «Не предлагать», число суперсетов и время сверх ориентира + 5 мин и вернёт мне план с замечаниями.`);
+  L.push(`Приложение при загрузке само проверяет дубли, «Не предлагать», число суперсетов и время сверх ориентира + 5 мин и вернёт мне план с замечаниями.`);
   L.push('');
   L.push(`## Обо мне`);
   L.push(`- ${P.sex}, возраст ${ageOn(P.birthDate, today)}, рост ${P.height} см, вес ${bw ? `${bw.value} кг (последний записанный, на ${bw.date})` : `~${P.startWeight} кг`}`);
@@ -1491,13 +1323,6 @@ function buildPrompt(count, opts = {}) {
   L.push(`- Что нравится: ${P.likes || 'не заполнено — спроси, прежде чем ставить новое упражнение'}`);
   if (P.recommendations) L.push(`- Твои постоянные рекомендации (ты записал их раньше): ${P.recommendations}`);
   L.push(`- RPE я указываю в процентах от максимального усилия: 100% — отказ, 90% — ~1 повтор в запасе, 80% — ~2–3 в запасе.`);
-  const rules = activeRules();
-  if (rules.length) {
-    L.push('');
-    L.push(`## Твои постоянные правила (выработаны на прошлых ошибках, действуют всегда)`);
-    L.push(`Перед каждым ответом сверь с ними план и сам ответ. Правила с пометкой «проверяет приложение» приложение проверяет и само.`);
-    rules.forEach((r, k) => L.push(`${k + 1}. ${r.text}${r.check ? ' (проверяет приложение)' : ''}`));
-  }
   L.push('');
 
   if (plan) {
@@ -1589,8 +1414,7 @@ function buildPrompt(count, opts = {}) {
     ...(state.requests || []).filter(r => r.insist).map(r => ({ date: r.date, text: r.text }))
   ].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10);
   L.push(`## Мои пожелания`);
-  if (!chat && !report && !recentWishes.length && !insistedBefore.length) L.push('Особых пожеланий нет.');
-  if (chat) L.push(`- Сейчас: пожелания — в моих сообщениях в этом чате. Просьбу что-то добавить, убрать или изменить считай [пожелание]; «настаиваю», «обязательно», «это важно» рядом с пожеланием — [НАСТАИВАЮ], отдельно по каждому.`);
+  if (!report && !recentWishes.length && !insistedBefore.length) L.push('Особых пожеланий нет.');
   if (report) L.push(`- Сейчас: найди пожелания в моём тексте «Как прошла тренировка» выше (если их там нет — значит, новых нет). Просьбу что-то добавить, убрать или изменить считай [пожелание]. Если я пишу «настаиваю», «обязательно», «это важно», «сделай именно так» или так же явно выделяю что-то как важное — считай это [НАСТАИВАЮ]. Решай по каждому пожеланию отдельно: «настаиваю» относится к тому пожеланию, рядом с которым написано, а не ко всем.`);
   recentWishes.forEach(w => L.push(`- После тренировки ${w.date} ${w.insist ? '[НАСТАИВАЮ]' : '[пожелание]'}: ${w.text}`));
   if (insistedBefore.length) {
@@ -1614,14 +1438,12 @@ function buildPrompt(count, opts = {}) {
 
   L.push(`## Что ещё учитывать`);
   L.push(`- План — на ближайший тренировочный день по расписанию (обычно вт или пт).`);
-  if (chat) L.push(`- Если я описываю прошедшую тренировку, это последняя тренировка: запиши её через update_log.workout сразу, а уточнения из разговора записывай повторным вызовом (запись заменится).`);
   if (report) L.push(`- Мой текст «Как прошла тренировка» — это последняя тренировка: учитывай её во всём, а в финале разбери в completed_workout. Если в обсуждении я что-то уточнил или поправил про прошедшую тренировку, в completed_workout должна попасть уточнённая версия.`);
   L.push(`- Ограничения из «Обо мне»; после пропусков и болезни — плавный возврат; если сейчас болезнь — отдых или восстановительная активность.`);
   L.push(`- Длительность около ${P.sessionMinutes} мин с учётом отдыха и не больше ${P.sessionMinutes + TIME_SLACK_MIN} мин по расчёту приложения. Каждое добавление — с равным по времени сокращением.`);
   L.push(`- Отдых между подходами и упражнениями подбирай сам под упражнение и цель: я на тебя в этом полагаюсь. Если по отчётам видно, что отдых не подходит (не добираю повторы, затягиваю тренировку), скорректируй его.`);
-  L.push(`- Если нужно, обнови мои данные из раздела «Обо мне» (${chat ? 'update_log.profile' : 'profile_update в финальном JSON'}). Отказы от упражнений и то, что мне понравилось, записывай в avoid и likes, а не в recommendations.`);
+  L.push(`- Если нужно, обнови мои данные из раздела «Обо мне» (profile_update в финальном JSON). Отказы от упражнений и то, что мне понравилось, записывай в avoid и likes, а не в recommendations.`);
   L.push('');
-  if (chat) { coachDataSections(L); return L.join('\n'); }
   L.push(`## Формат финального JSON (только на этапе 3)`);
   L.push(`Один блок \`\`\`json со следующей структурой — я загружу его в приложение. Все тексты в нём — итог нашего обсуждения, а не первый вариант:`);
   L.push('```json');
@@ -1679,16 +1501,6 @@ function buildPrompt(count, opts = {}) {
 }
 
 function viewClaude() {
-  if (coach.status === 'ready') return viewCoachChat();
-  if (coach.status === 'init') return '<h2>Тренер</h2><div class="card empty"><p>Подключаю тренера…</p></div>';
-  const head = IN_CLAUDE
-    ? `<div class="callout warn" style="margin-bottom:12px"><p style="margin-top:0"><b>Чат с тренером не включился.</b> ${esc(coach.reason)}</p>
-        <p class="small">Откройте меню страницы → «Разрешения» и разрешите доступ к Claude, затем обновите страницу.</p>
-        <button class="btn sm" data-act="coach-perms">Открыть разрешения</button></div>`
-    : `<div class="callout" style="margin-bottom:12px"><b>Чат с тренером работает на странице на claude.ai:</b> <a href="${ARTIFACT_URL}" target="_blank" rel="noopener">${ARTIFACT_URL}</a>. Там тренер сам правит план, а приложение проверяет его. Здесь, в файле, — прежний способ через копирование промпта.</div>`;
-  return head + (IN_CLAUDE ? `<details><summary>Прежний способ: скопировать промпт в отдельный чат</summary>${viewClaudeManual()}</details>` : viewClaudeManual());
-}
-function viewClaudeManual() {
   const count = ui.promptCount;
   const prompt = buildPrompt(count);
   const total = state.history.length;
@@ -1797,8 +1609,7 @@ function normalizePlan(o) {
         rpe: normRpe(ex.rpe),
         change: ex.change ? String(ex.change) : '',
         notes: ex.notes ? String(ex.notes) : '',
-        ...(detail ? { sets_detail: detail } : {}),
-        ...(normMuscles(ex.muscles) ? { muscles: normMuscles(ex.muscles) } : {})
+        ...(detail ? { sets_detail: detail } : {})
       };
     }),
       ...(nw.cooldown && !nw.exercises.some(e => e.kind === 'cooldown') ? [{ kind: 'cooldown', name: 'Заминка', duration_min: 5, notes: String(nw.cooldown) }] : [])
@@ -1807,7 +1618,7 @@ function normalizePlan(o) {
 }
 // completed_workout из ответа Claude → запись истории. Упражнения плана находятся по номеру (tag),
 // «как в плане» разворачивается в подходы плана, чтобы Claude не переписывал цифры.
-function normalizeLog(c, plan, report = (ui.report || '').trim()) {
+function normalizeLog(c, plan) {
   const status = STATUS[c.status] ? c.status : 'done';
   const byTag = Object.fromEntries((plan ? flatExercises(plan) : []).map(f => [f.tag, f]));
   const tagKey = (t) => String(t ?? '').trim().toUpperCase().replace(/^(\d+)\s*/, '$1')
@@ -1854,7 +1665,7 @@ function normalizeLog(c, plan, report = (ui.report || '').trim()) {
     ...(status === 'done'
       ? { exercises, effort: normRpe(c.effort), duration: num(c.duration), sleep: num(c.sleep) }
       : { reason: c.reason ? String(c.reason).trim() : '' }),
-    report,
+    report: (ui.report || '').trim(),
     assumptions: [...(Array.isArray(c.assumptions) ? c.assumptions : []), ...(Array.isArray(c.questions) ? c.questions : []),
       ...lost.map(t => `Номера ${t} нет в плане — упражнение не записано, добавьте его вручную`)].filter(Boolean).map(String)
   };
@@ -1896,120 +1707,7 @@ function planIssues(plan) {
   if (mins > P.sessionMinutes + TIME_SLACK_MIN) issues.push(`По расчёту приложения план идёт ~${mins} мин: это больше ориентира ${P.sessionMinutes} мин + ${TIME_SLACK_MIN}.`);
   return issues;
 }
-/* =====================================================================
-   Баланс мышечных групп и проверки плана — считает код, а не тренер.
-   Каждое упражнение плана размечено группами (muscles: primary / secondary), разметка копится в muscleMap,
-   поэтому одно упражнение считается одинаково во всех разговорах.
-   ===================================================================== */
-const MUSCLES = [
-  ['chest', 'Грудь', 'big'], ['lats', 'Широчайшие', 'big'], ['midback', 'Середина спины', 'big'], ['traps', 'Верх трапеции', 'small'],
-  ['front_delt', 'Передняя дельта', 'small'], ['side_delt', 'Средняя дельта', 'small'], ['rear_delt', 'Задняя дельта', 'small'],
-  ['biceps', 'Бицепс', 'small'], ['triceps', 'Трицепс', 'small'], ['quads', 'Квадрицепс', 'big'], ['hams', 'Задняя поверхность бедра', 'big'],
-  ['glutes', 'Ягодицы', 'big'], ['calves', 'Икры', 'small'], ['abs', 'Пресс', 'small'], ['lower_back', 'Разгибатели спины', 'small']
-];
-const MUSCLE_LABEL = Object.fromEntries(MUSCLES.map(([id, l]) => [id, l]));
-// Нижняя граница недельного объёма (рабочие подходы за две тренировки): крупная группа 10, мелкая 6.
-const MUSCLE_MIN = { big: 10, small: 6 };
-const muscleId = (v) => {
-  const t = String(v || '').trim().toLowerCase();
-  if (MUSCLE_LABEL[t]) return t;
-  const hit = MUSCLES.find(([, l]) => l.toLowerCase() === t);
-  return hit ? hit[0] : null;
-};
-function normMuscles(m) {
-  if (!m || typeof m !== 'object') return null;
-  const list = (v) => [...new Set((Array.isArray(v) ? v : v ? [v] : []).map(muscleId).filter(Boolean))];
-  const primary = list(m.primary), secondary = list(m.secondary).filter(x => !primary.includes(x));
-  return primary.length || secondary.length ? { primary, secondary } : null;
-}
-// Разметка упражнения: из самого плана, иначе из накопленной muscleMap по названию.
-function musclesOf(name, own) {
-  return normMuscles(own) || normMuscles((state.muscleMap || {})[nameKey(name)]) || null;
-}
-function rememberMuscles(plan) {
-  const map = { ...(state.muscleMap || {}) };
-  flatExercises(plan).filter(f => !f.stage && f.ex.muscles).forEach(f => { map[nameKey(f.ex.name)] = f.ex.muscles; });
-  state.muscleMap = map;
-}
-// Подходы по группам: прямой рабочий подход = 1, косвенный = 0.5; разминочные не считаются.
-function addSets(acc, muscles, n) {
-  if (!muscles || !n) return;
-  muscles.primary.forEach(g => { acc[g] = (acc[g] || 0) + n; });
-  muscles.secondary.forEach(g => { acc[g] = (acc[g] || 0) + n / 2; });
-}
-function planMuscleSets(plan) {
-  const acc = {}, unknown = [];
-  flatExercises(plan).filter(f => !f.stage).forEach(f => {
-    const m = musclesOf(f.ex.name, f.ex.muscles);
-    if (!m) unknown.push(f.ex.name);
-    addSets(acc, m, workSets(f.ex).length);
-  });
-  return { acc, unknown };
-}
-const lastDoneWorkout = () => sortedHistory().find(h => h.status === 'done') || null;
-function entryMuscleSets(h) {
-  const acc = {}, unknown = [];
-  const plan = h && h.planId ? state.plans.find(p => p.id === h.planId) : null;
-  const fromPlan = plan ? Object.fromEntries(flatExercises(plan).filter(f => !f.stage).map(f => [nameKey(f.ex.name), f.ex.muscles])) : {};
-  for (const ex of (h && h.exercises) || []) {
-    const n = (ex.sets || []).filter(s => !s.warmup && s.done !== false).length;
-    if (!n) continue;
-    const m = musclesOf(ex.name, fromPlan[nameKey(ex.name)]);
-    if (!m) unknown.push(ex.name);
-    addSets(acc, m, n);
-  }
-  return { acc, unknown };
-}
-const activeRules = () => (state.rules || []).filter(r => r.active !== false);
-const skippedGroups = () => new Set(activeRules().filter(r => r.check && r.check.type === 'skip_group').map(r => muscleId(r.check.group)).filter(Boolean));
-// Таблица баланса: окно «прошлая тренировка + этот план».
-function balanceRows(plan, tradeoffs = []) {
-  const prev = entryMuscleSets(lastDoneWorkout());
-  const cur = planMuscleSets(plan);
-  const skip = skippedGroups();
-  const minOf = (id, size) => {
-    const r = activeRules().find(x => x.check && x.check.type === 'min_sets' && muscleId(x.check.group) === id);
-    return r ? num(r.check.sets) || MUSCLE_MIN[size] : MUSCLE_MIN[size];
-  };
-  const why = Object.fromEntries((tradeoffs || []).map(t => [muscleId(t.group), t.reason]));
-  const rows = MUSCLES.map(([id, label, size]) => {
-    const p = prev.acc[id] || 0, c = cur.acc[id] || 0, total = p + c, min = minOf(id, size);
-    const status = skip.has(id) ? 'skip' : total >= min ? 'ok' : why[id] ? 'tradeoff' : 'low';
-    return { id, label, prev: p, plan: c, total, min, status, reason: why[id] || '' };
-  });
-  return { rows, unknownPrev: prev.unknown, unknownPlan: cur.unknown, prevDate: (lastDoneWorkout() || {}).date || null };
-}
-// Все проверки плана: violations — нарушения, с которыми план не принимается; warnings — на что обратить внимание.
-function planChecks(plan, tradeoffs = []) {
-  if (!plan) return { violations: [], warnings: [], balance: null, minutes: 0 };
-  const P = profile();
-  const violations = planIssues(plan);
-  const warnings = [];
-  const bal = balanceRows(plan, tradeoffs);
-  if (bal.unknownPlan.length) violations.push(`Не размечены мышцы у: ${bal.unknownPlan.join(', ')} — укажи muscles.`);
-  if (bal.unknownPrev.length) warnings.push(`Не размечены мышцы у упражнений прошлой тренировки: ${bal.unknownPrev.join(', ')} — укажи их в update_log.muscles, иначе баланс неполный.`);
-  bal.rows.filter(r => r.status === 'low').forEach(r => violations.push(`${r.label}: ${fmtSets(r.total)} из ${r.min} за неделю — добавь подходы или назови жертву в tradeoffs.`));
-  const work = flatExercises(plan).filter(f => !f.stage);
-  const known = new Set([...allExerciseNames(), ...state.plans.flatMap(p => flatExercises(p).map(f => f.ex.name))].map(nameKey));
-  const fresh = work.filter(f => !known.has(nameKey(f.ex.name))).map(f => f.ex.name);
-  const mins = fmtMin(planItems(plan).total);
-  const ssCount = planList(plan).filter(isSuperset).length;
-  let maxNew = 2;
-  for (const r of activeRules()) {
-    const c = r.check; if (!c) continue;
-    const tag = `Правило «${r.text}»`;
-    if (c.type === 'avoid' && c.pattern) work.filter(f => mentions(f.ex.name, c.pattern) || mentions(c.pattern, f.ex.name)).forEach(f => violations.push(`${tag}: «${f.ex.name}» (№${f.tag}).`));
-    if (c.type === 'require_group' && muscleId(c.group) && !(planMuscleSets(plan).acc[muscleId(c.group)] >= 1)) violations.push(`${tag}: в плане нет упражнений на группу «${MUSCLE_LABEL[muscleId(c.group)]}».`);
-    if (c.type === 'max_supersets' && ssCount > num(c.n)) violations.push(`${tag}: суперсетов ${ssCount}.`);
-    if (c.type === 'max_minutes' && mins > num(c.n)) violations.push(`${tag}: план идёт ~${mins} мин.`);
-    if (c.type === 'max_new' && num(c.n) !== null) maxNew = num(c.n);
-  }
-  if (fresh.length > maxNew) warnings.push(`Новых упражнений ${fresh.length} (${fresh.join(', ')}), а лучше не больше ${maxNew}.`);
-  return { violations, warnings, balance: bal, minutes: mins, target: P.sessionMinutes, supersets: ssCount, fresh };
-}
-const fmtSets = (n) => `${+n.toFixed(1)}`;
-
-async function importPlan() {
+function importPlan() {
   const text = $('#importText').value.trim();
   const msg = $('#importMsg');
   if (!text) { msg.textContent = 'Поле пустое'; return; }
@@ -2021,9 +1719,9 @@ async function importPlan() {
     const entry = c ? normalizeLog(c, currentPlan()) : null;
     const upd = o.profile_update || o.profileUpdate || null;
     const plan = o.next_workout || o.nextWorkout || o.workout || o.exercises || (!entry && !upd) ? normalizePlan(o) : null;
-    if (ui.lastImport === text && !await ask('Этот ответ уже загружен. Загрузить ещё раз? (Запись и план продублируются.)')) return;
+    if (ui.lastImport === text && !confirm('Этот ответ уже загружен. Загрузить ещё раз? (Запись и план продублируются.)')) return;
     const issues = plan ? planIssues(plan) : [];
-    if (issues.length && !await ask(`В плане тренера есть ошибки:\n\n${issues.map(x => `• ${x}`).join('\n')}\n\nЛучше вернуть план тренеру: «Вернуть тренеру» скопирует замечания, чтобы вставить их в чат.`, { ok: 'Загрузить как есть', cancel: 'Вернуть тренеру' })) {
+    if (issues.length && !confirm(`В плане тренера есть ошибки:\n\n${issues.map(x => `• ${x}`).join('\n')}\n\nЛучше вернуть план тренеру: «Отмена» — скопировать замечания, чтобы вставить их в чат. «ОК» — загрузить как есть.`)) {
       const back = `В плане есть ошибки, исправь и пришли финальный JSON заново:\n${issues.map(x => `- ${x}`).join('\n')}`;
       copyText(back).then(ok => toast(ok ? 'Замечания скопированы — вставьте их в чат с тренером' : 'Не удалось скопировать'));
       msg.textContent = back;
@@ -2057,506 +1755,6 @@ async function importPlan() {
     toast((entry ? 'Тренировка записана, новый план загружен' : 'План загружен') + updMsg);
     setTab(entry && entry.assumptions.length ? 'history' : 'today');
   } catch (e) { msg.textContent = e.message; }
-}
-
-/* =====================================================================
-   Тренер в приложении: чат с Claude (капабилити sample), план правится инструментами,
-   проверки считает код, замечания превращаются в постоянные правила.
-   ===================================================================== */
-const coach = { sample: null, mode: 'tools', status: IN_CLAUDE ? 'init' : 'off', reason: '', busy: false, ctl: null, stream: '', progress: '', notes: [], error: '' };
-async function coachInit() {
-  if (!IN_CLAUDE) return;
-  const sample = await capability('sample');
-  const lim = sample ? await sample.limits().catch(() => null) : null;
-  if (!sample) {
-    coach.status = 'off';
-    coach.reason = 'Claude не подключён к этой странице: окно не дало доступ к Claude.';
-  } else {
-    // Где инструменты недоступны (например, в части приложений), тренер присылает действия блоком в конце ответа.
-    coach.sample = sample; coach.status = 'ready'; coach.mode = lim && lim.tools ? 'tools' : 'text';
-  }
-  if (ui.tab === 'claude') render();
-}
-const newSession = () => ({ id: uid(), startedAt: new Date().toISOString(), basePlanId: (currentPlan() || {}).id || null,
-  messages: [], issues: [], draft: null, tradeoffs: [], workoutId: null, acceptedPlanId: null, undoTaken: false });
-function session() { if (!state.coach) state.coach = newSession(); return state.coach; }
-const issueNo = (x) => String(x.id).replace(/^\D+/, '');
-const openIssues = (S = session()) => S.issues.filter(x => x.status !== 'fixed');
-// Перед первой правкой постоянных данных в разговоре — снимок для отката.
-function coachSnapshot() {
-  const S = session(); if (S.undoTaken) return;
-  const { coach: _, ...rest } = state;
-  safeSet(UNDO_KEY, JSON.stringify({ at: new Date().toISOString(), state: JSON.stringify(rest), report: '', what: 'разговор с тренером', coach: true }));
-  S.undoTaken = true;
-}
-
-// Разделы промпта, которые есть только в разговоре внутри приложения.
-function coachWorkSection(L) {
-  L.push(`## Как мы работаем`);
-  L.push(`- Ты не помнишь ничего, кроме этого текста и сообщений ниже. Всё важное (профиль, правила, история, черновик плана, проверки, замечания) приложение даёт заново к каждому ответу — опирайся на эти данные, а не на память о разговоре.`);
-  L.push(`- План меняешь только инструментом set_plan: каждый раз присылаешь план целиком, новой версией. Текстом план не перепечатывай — приложение показывает его рядом с чатом и само выводит список изменений под твоим ответом. В тексте объясни, зачем изменил и что это дало.`);
-  L.push(`- После set_plan приложение возвращает проверки: баланс групп за неделю, время, суперсеты, «Не предлагать», дубли, твои правила. Пока есть нарушения (violations), не отвечай мне: исправь план новым set_plan. Группу ниже ориентира, которую сознательно не добираешь, назови в tradeoffs с причиной. Если исправить нельзя без моего решения — коротко спроси.`);
-  L.push(`- Замечания. Любой недостаток плана или твоего ответа, на который я указал (или который ты нашёл сам), сразу запиши в update_log.issues, исправь и в том же ответе закрой: status "fixed", fix — что сделал, rule — общее правило, чтобы это не повторилось в будущих планах (не про этот план, а про класс ошибки). Если правило можно проверить кодом, добавь check. Приложение хранит правила всегда и показывает их тебе в каждом разговоре. Открытые замечания приложение показывает мне, а план с ними принять нельзя.`);
-  L.push(`- Если я нашёл ошибку: одна фраза, в чём именно ошибка, и сразу исправление. Никаких «да, ты прав», «точно, я забыл», «отличное замечание», извинений.`);
-  L.push(`- Прошедшую тренировку из моего сообщения запиши через update_log.workout (формат ниже), уточнения — повторным вызовом, запись заменится. Мышцы упражнений прошлой тренировки, которых нет в разметке, укажи в update_log.muscles.`);
-  L.push(`- Первый ответ в разговоре: разбор прошедшей тренировки (2–5 предложений, если она была), ответы на мои вопросы, разбор пожеланий, затем собери план по шагам «Как подбирать план» и вызови set_plan. В тексте: тип тренировки, бюджет времени, что в плане и почему коротко, какие группы ниже ориентира и чем жертвуешь. Таблицу баланса не рисуй: её считает и показывает приложение.`);
-  L.push(`- Дальше отвечай коротко: обычно 2–6 предложений. Вопросы ко мне — только если ответ меняет план.`);
-  L.push(`- Когда всё согласовано, нарушений и открытых замечаний нет, скажи, что план можно принимать кнопкой «Принять план». JSON мне не показывай.`);
-  L.push('');
-}
-function coachDataSections(L) {
-  const S = session();
-  L.push(`## Мышечные группы (id для muscles и tradeoffs)`);
-  L.push(MUSCLES.map(([id, l, size]) => `${id} — ${l} (${size === 'big' ? 'крупная' : 'мелкая'}, минимум ${MUSCLE_MIN[size]} за неделю)`).join('; '));
-  L.push(`Разметка: primary — группы, ради которых упражнение (1 рабочий подход = 1), secondary — косвенная нагрузка (= 0.5). Одно и то же упражнение размечай одинаково. Уже размечено:`);
-  const map = state.muscleMap || {};
-  const names = Object.keys(map);
-  L.push(names.length ? names.map(n => `${n}: ${map[n].primary.join('+')}${map[n].secondary.length ? ` / ${map[n].secondary.join('+')}` : ''}`).join('; ') : 'пока ничего.');
-  L.push('');
-  const last = lastDoneWorkout();
-  const rec = S.workoutId ? state.history.find(h => h.id === S.workoutId) : null;
-  L.push(`## Прошедшая тренировка в этом разговоре`);
-  L.push(rec ? `Записана: ${rec.date}, ${rec.status === 'done' ? `${(rec.exercises || []).length} упражнений` : STATUS[rec.status].label}. Поправить — снова update_log.workout.`
-    : `Ещё не записана${last ? ` (последняя в истории — ${last.date})` : ''}. Номера упражнений — из «Последнего выданного плана».`);
-  L.push('');
-  L.push(`## Черновик плана на экране`);
-  if (!S.draft) L.push('Пока нет — собери его и пришли через set_plan.');
-  else {
-    const ch = planChecks(S.draft, S.tradeoffs);
-    L.push(`«${S.draft.title}» на ${S.draft.date}, ~${ch.minutes} мин по расчёту приложения (ориентир ${ch.target}, не больше ${ch.target + TIME_SLACK_MIN}), суперсетов ${ch.supersets} из ${profile().maxSupersets}.`);
-    planList(S.draft).forEach((ex, i) => {
-      if (isStage(ex)) return L.push(`${i + 1}. ${stageName(ex)}, ${num(ex.duration_min) || 5} мин${ex.notes ? `: ${ex.notes}` : ''}`);
-      const m = (e) => { const mm = musclesOf(e.name, e.muscles); return mm ? ` [${mm.primary.join('+')}${mm.secondary.length ? ` / ${mm.secondary.join('+')}` : ''}]` : ' [мышцы не размечены]'; };
-      if (!isSuperset(ex)) return L.push(`${i + 1}. ${ex.name}: ${planLine(ex)}${m(ex)}`);
-      L.push(`${i + 1}. Суперсет${ex.name ? ` «${ex.name}»` : ''} (${supersetHead(ex)}):`);
-      ex.parts.forEach((p, j) => L.push(`   ${i + 1}${SS_LABELS[j]}. ${p.name}: ${planLine({ ...p, sets: ex.sets, rest_sec: null })}${m(p)}`));
-    });
-    if (S.tradeoffs.length) L.push(`Жертвы (tradeoffs): ${S.tradeoffs.map(t => `${MUSCLE_LABEL[t.group] || t.group} — ${t.reason}`).join('; ')}`);
-    L.push('');
-    L.push(`## Проверки приложения для черновика`);
-    L.push(ch.violations.length ? `Нарушения (исправь до ответа):\n${ch.violations.map(v => `- ${v}`).join('\n')}` : 'Нарушений нет.');
-    if (ch.warnings.length) L.push(`Обрати внимание:\n${ch.warnings.map(v => `- ${v}`).join('\n')}`);
-    L.push(`Баланс (прошлая тренировка ${ch.balance.prevDate || '—'} + черновик = итого / минимум): ${ch.balance.rows.map(r => `${r.label} ${fmtSets(r.prev)}+${fmtSets(r.plan)}=${fmtSets(r.total)}/${r.min}${r.status === 'skip' ? ' (не тренируем)' : r.status === 'tradeoff' ? ' (жертва)' : r.status === 'low' ? ' НИЖЕ' : ''}`).join('; ')}`);
-  }
-  L.push('');
-  L.push(`## Замечания в этом разговоре`);
-  L.push(S.issues.length ? S.issues.map(x => `- ${x.id} [${x.status === 'fixed' ? 'исправлено' : 'ОТКРЫТО'}]: ${x.text}${x.fix ? ` — ${x.fix}` : ''}`).join('\n') : 'Пока нет.');
-  L.push('');
-  L.push(`## Инструменты`);
-  if (coach.mode === 'text') {
-    L.push(`В этом окне инструменты вызываются не напрямую, а блоком в самом конце ответа, после текста. Блок начинается строкой \`\`\`actions и заканчивается строкой \`\`\`, внутри один JSON-объект: {"set_plan": {plan, tradeoffs}, "update_log": {...}} — любые из двух ключей, поля те же, что ниже. Приложение выполнит действия по порядку и уберёт блок с экрана. Результат проверок ты увидишь в разделе «Проверки приложения» со следующим сообщением; если нарушения останутся, приложение само пришлёт их тебе. Поэтому в тексте не утверждай, что нарушений нет, пока не видел проверку.`);
-  }
-  L.push(`set_plan({plan, tradeoffs}) — plan в формате ниже, целиком; tradeoffs — [{group, reason}] для групп ниже минимума, которые сознательно не добираешь (без поля — остаются прошлые). Возвращает проверки.`);
-  L.push(`update_log({workout, issues, rules, profile, muscles}) — любые поля по отдельности. issues: [{id?, text, status: "open"|"fixed", fix?, rule?, check?}] — новое замечание без id, закрытие — с id. rules: [{text, check?}] — новое постоянное правило без замечания. check: {type: "avoid", pattern} | {type: "require_group", group} | {type: "min_sets", group, sets} | {type: "skip_group", group} | {type: "max_supersets", n} | {type: "max_minutes", n} | {type: "max_new", n}. profile — как profile_update: ${PROFILE_FIELDS.map(([k]) => k).join(', ')}, session_minutes, max_supersets, reason. muscles: {"Название упражнения": {primary: [...], secondary: [...]}}.`);
-  L.push(`Формат plan (как в приложении): {date, title, focus, rest_between_exercises_sec, summary, recommendation, warnings: [], answers: [{question, answer}], wishes_review: [{wish, decision: "принято"|"изменено"|"не принято"|"принято по настоянию", reason}], notes, exercises: [...]}. Упражнение: {name, sets, reps, unit: "reps"|"sec", weight (кг; 0 — свой вес; null — подобрать, только для нового), rest_sec, rpe (50–100), change (до четырёх слов), notes, sets_detail?: [{weight, reps, warmup?}], muscles: {primary: [...], secondary: [...]}}. Суперсет: {type: "superset", name, rounds, rest_sec, change, notes, parts: [упражнения без rest_sec, с muscles, можно sets_detail — рабочих подходов столько, сколько кругов]}. Разминка и заминка — первый и последний пункты: {kind: "warmup"|"cooldown", name, duration_min, notes}. Названия — как в истории.`);
-  L.push(`Формат workout: {date, status: "done"|"skipped"|"sick", exercises: [{tag: "2"|"5А", as_planned?: true, sets?: [{weight, reps, warmup?}], skipped?: true, rpe?, notes?} | {tag: null, name, sets}], wellbeing (1–5), effort (%), duration (мин), sleep (ч), bodyweight (только утренний, иначе null и цифра в notes), notes, extras, reason, wishes: [{text, insist}] (только из моего отчёта), assumptions: []}. Номера tag — из «Последнего выданного плана»; разминку и заминку в exercises не включай.`);
-}
-
-// Изменения между версиями плана — их приложение показывает под ответом тренера, чтобы он не перепечатывал план.
-function planDiff(a, b) {
-  const items = (p) => p ? flatExercises(p).filter(f => !f.stage).map(f => ({ key: nameKey(f.ex.name), name: f.ex.name, text: planText(f.ex), tag: f.tag })) : [];
-  const A = items(a), B = items(b), out = [];
-  const byA = Object.fromEntries(A.map(x => [x.key, x]));
-  const byB = Object.fromEntries(B.map(x => [x.key, x]));
-  B.forEach(x => { const o = byA[x.key]; if (!o) out.push(`+ №${x.tag} ${x.name}: ${x.text}`); else if (o.text !== x.text) out.push(`~ №${x.tag} ${x.name}: ${o.text} → ${x.text}`); });
-  A.forEach(x => { if (!byB[x.key]) out.push(`− ${x.name}`); });
-  if (a && b && fmtMin(planItems(a).total) !== fmtMin(planItems(b).total)) out.push(`⏱ ~${fmtMin(planItems(a).total)} → ~${fmtMin(planItems(b).total)} мин`);
-  return out;
-}
-const CHECK_TYPES = ['avoid', 'require_group', 'min_sets', 'skip_group', 'max_supersets', 'max_minutes', 'max_new'];
-function normCheck(c) {
-  if (!c || typeof c !== 'object' || !CHECK_TYPES.includes(c.type)) return null;
-  const out = { type: c.type };
-  if (c.type === 'avoid') { out.pattern = String(c.pattern || '').trim(); if (!nameKey(out.pattern)) return null; }
-  if (['require_group', 'min_sets', 'skip_group'].includes(c.type)) { out.group = muscleId(c.group); if (!out.group) return null; }
-  if (c.type === 'min_sets') { out.sets = num(c.sets); if (!(out.sets > 0)) return null; }
-  if (['max_supersets', 'max_minutes', 'max_new'].includes(c.type)) { out.n = num(c.n); if (out.n === null) return null; }
-  return out;
-}
-const checkLabel = (c) => !c ? '' : {
-  avoid: () => `не предлагать «${c.pattern}»`, require_group: () => `в плане есть ${(MUSCLE_LABEL[c.group] || '').toLowerCase()}`,
-  min_sets: () => `${(MUSCLE_LABEL[c.group] || '').toLowerCase()}: не меньше ${c.sets} подходов в неделю`, skip_group: () => `${(MUSCLE_LABEL[c.group] || '').toLowerCase()} не тренируем`,
-  max_supersets: () => `суперсетов не больше ${c.n}`, max_minutes: () => `план не дольше ${c.n} мин`, max_new: () => `новых упражнений не больше ${c.n}`
-}[c.type]();
-function addRule(text, check, source, issue) {
-  const t = String(text || '').trim(); if (!t) return null;
-  const dup = (state.rules || []).find(r => r.text === t);
-  if (dup) { dup.active = true; return dup; }
-  const r = { id: uid(), text: t, ...(normCheck(check) ? { check: normCheck(check) } : {}), active: true, at: new Date().toISOString(), date: todayIso(), source, ...(issue ? { issue } : {}) };
-  state.rules = [...(state.rules || []), r];
-  return r;
-}
-function coachTools() {
-  const S = session();
-  const progress = (t) => { coach.progress = t; updateStream(); };
-  return [
-    {
-      name: 'set_plan',
-      description: 'Заменяет черновик плана новой версией целиком и возвращает проверки приложения: время, суперсеты, баланс групп за неделю, нарушения. Вызывай при любом изменении плана; пока есть violations — исправляй.',
-      inputSchema: { type: 'object', properties: {
-        plan: { type: 'object', description: 'План целиком: date, title, focus, rest_between_exercises_sec, summary, recommendation, warnings, answers, wishes_review, notes, exercises (с muscles у каждого упражнения и части суперсета).' },
-        tradeoffs: { type: 'array', description: 'Группы ниже минимума, которые сознательно не добираешь: [{group, reason}]. Не передавай — останутся прошлые.', items: { type: 'object', properties: { group: { type: 'string' }, reason: { type: 'string' } } } }
-      }, required: ['plan'] },
-      execute(input) {
-        progress('Тренер обновляет план…');
-        const raw = input && typeof input.plan === 'object' && input.plan ? input.plan : input;
-        let plan;
-        try { plan = normalizePlan({ ...raw, next_workout: raw }); } catch (e) { throw new Error('В plan нет exercises'); }
-        if (S.draft) plan.id = S.draft.id;
-        if (Array.isArray(input.tradeoffs)) S.tradeoffs = input.tradeoffs.map(t => ({ group: muscleId(t && t.group), reason: String((t && t.reason) || '').trim() })).filter(t => t.group && t.reason);
-        const changes = planDiff(S.draft, plan);
-        S.draft = plan;
-        coach.notes.push(...(changes.length ? changes : ['план без изменений']));
-        save(); refreshCoachPanel();
-        const ch = planChecks(plan, S.tradeoffs);
-        progress(ch.violations.length ? `Проверка плана: нарушений ${ch.violations.length}` : 'Проверка плана: нарушений нет');
-        return { minutes: ch.minutes, limit_minutes: ch.target + TIME_SLACK_MIN, supersets: ch.supersets, max_supersets: profile().maxSupersets,
-          violations: ch.violations, warnings: ch.warnings,
-          balance: ch.balance.rows.filter(r => r.status !== 'skip').map(r => `${r.id} ${fmtSets(r.total)}/${r.min}${r.status === 'low' ? ' LOW' : r.status === 'tradeoff' ? ' tradeoff' : ''}`).join(', '),
-          changes };
-      }
-    },
-    {
-      name: 'update_log',
-      description: 'Записывает в приложение: прошедшую тренировку (workout), замечания (issues: новые и закрытые, закрытое с rule становится постоянным правилом), новые правила (rules), правки «Обо мне» (profile), разметку мышц упражнений (muscles). Возвращает список замечаний.',
-      inputSchema: { type: 'object', properties: {
-        workout: { type: 'object', description: 'Прошедшая тренировка в формате completed_workout.' },
-        issues: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, text: { type: 'string' }, status: { type: 'string', enum: ['open', 'fixed'] }, fix: { type: 'string' }, rule: { type: 'string' }, check: { type: 'object' } } } },
-        rules: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, check: { type: 'object' } } } },
-        profile: { type: 'object', description: 'Только изменившиеся поля «Обо мне» и reason.' },
-        muscles: { type: 'object', description: '{"Название упражнения": {primary: [...], secondary: [...]}}' }
-      } },
-      execute(input) {
-        progress('Тренер делает записи…');
-        const out = {};
-        if (input.muscles && typeof input.muscles === 'object') {
-          const map = { ...(state.muscleMap || {}) };
-          for (const [n, m] of Object.entries(input.muscles)) { const mm = normMuscles(m); if (mm && nameKey(n)) map[nameKey(n)] = mm; }
-          state.muscleMap = map; out.muscles = 'записано';
-        }
-        if (input.workout && typeof input.workout === 'object') {
-          coachSnapshot();
-          const base = state.plans.find(p => p.id === S.basePlanId) || currentPlan();
-          const report = S.messages.filter(m => m.role === 'user').map(m => m.text).join('\n\n').slice(0, 6000);
-          let entry;
-          try { entry = normalizeLog(input.workout, base, report); } catch (e) { throw new Error(`Тренировка не записана: ${e.message}`); }
-          const old = S.workoutId ? state.history.find(h => h.id === S.workoutId) : null;
-          if (old) { entry.id = old.id; entry.createdAt = old.createdAt; state.history = state.history.map(h => h.id === old.id ? entry : h); }
-          else state.history.push(entry);
-          S.workoutId = entry.id;
-          coach.notes.push(`${old ? 'запись поправлена' : 'тренировка записана'}: ${entry.date}`);
-          out.workout = `${old ? 'заменена' : 'записана'}: ${entry.date}, ${entry.status === 'done' ? `${entry.exercises.length} упражнений` : entry.status}${entry.assumptions.length ? `; допущения: ${entry.assumptions.join('; ')}` : ''}`;
-        }
-        if (input.profile && typeof input.profile === 'object') {
-          coachSnapshot();
-          const changes = applyProfileUpdate(input.profile, 'coach');
-          if (changes.length) coach.notes.push(`«Обо мне»: ${changes.map(c => PROFILE_LABELS[c.field] || c.field).join(', ')}`);
-          out.profile = changes.length ? `изменено: ${changes.map(c => c.field).join(', ')}` : 'без изменений';
-        }
-        if (Array.isArray(input.issues)) {
-          for (const it of input.issues) {
-            if (!it || typeof it !== 'object') continue;
-            let x = it.id ? S.issues.find(i => i.id === String(it.id)) : null;
-            if (!x) {
-              if (!String(it.text || '').trim()) continue;
-              x = { id: `i${S.issues.length + 1}`, text: String(it.text).trim(), status: 'open', source: 'coach', at: new Date().toISOString() };
-              S.issues.push(x);
-              coach.notes.push(`замечание ${issueNo(x)}: ${x.text}`);
-            }
-            if (it.status === 'fixed' && x.status !== 'fixed') {
-              coachSnapshot();
-              x.status = 'fixed'; x.fix = String(it.fix || '').trim();
-              const r = addRule(it.rule || `Не повторять: ${x.text}`, it.check, 'issue', x.text);
-              if (r) x.ruleId = r.id;
-              coach.notes.push(`замечание ${issueNo(x)} исправлено${r ? `, правило: ${r.text}` : ''}`);
-            }
-          }
-          out.issues = S.issues.map(i => `${i.id} ${i.status}: ${i.text}`);
-        }
-        if (Array.isArray(input.rules)) {
-          coachSnapshot();
-          const added = input.rules.map(r => r && addRule(r.text, r.check, 'coach')).filter(Boolean);
-          added.forEach(r => coach.notes.push(`правило: ${r.text}`));
-          out.rules_added = added.length;
-        }
-        save(); refreshCoachPanel();
-        return out;
-      }
-    }
-  ];
-}
-function coachInput() {
-  const S = session();
-  const turns = S.messages.filter(m => String(m.text || '').trim()).slice(-40).map(m => ({
-    role: m.role === 'assistant' ? 'assistant' : 'user',
-    content: m.role === 'assistant' && m.notes && m.notes.length ? `${m.text}\n\n(действия в приложении: ${m.notes.join('; ')})` : m.text
-  }));
-  return [{ role: 'user', content: buildPrompt(ui.promptCount, { chat: true }) }, ...turns];
-}
-// Режим без инструментов: действия приходят блоком ```actions в конце ответа.
-function splitActions(t) {
-  const i = String(t || '').search(/```actions/);
-  if (i < 0) return { text: String(t || '').trim(), actions: null };
-  const text = t.slice(0, i).trim();
-  const body = t.slice(i).replace(/^```actions\s*/, '').replace(/```\s*$/, '').trim();
-  try { return { text, actions: JSON.parse(body) }; } catch (e) { return { text, actions: null, error: 'блок действий не разобрался' }; }
-}
-function runActions(actions) {
-  const tools = Object.fromEntries(coachTools().map(t => [t.name, t]));
-  for (const name of ['update_log', 'set_plan']) {
-    if (!actions || typeof actions[name] !== 'object' || !actions[name]) continue;
-    try { tools[name].execute(actions[name]); } catch (e) { coach.notes.push(`${name}: ${e.message}`); }
-  }
-}
-const COACH_ERRORS = {
-  not_granted: 'Странице не разрешено обращаться к Claude. Разрешите это в меню страницы и обновите её.',
-  sampling_disabled: 'Claude недоступен для этого аккаунта.',
-  rate_limited: 'Достигнут лимит обращений к Claude. Попробуйте позже.',
-  session_expired: 'Войдите в claude.ai заново и повторите.',
-  prompt_too_large: 'Разговор стал слишком длинным. Начните новый: правила и записи сохранятся.',
-  refused: 'Claude не ответил на это сообщение. Переформулируйте его.',
-  empty_completion: 'Тренер ничего не ответил. Повторите или переформулируйте.'
-};
-async function coachSend(text, { auto = false } = {}) {
-  const S = session();
-  if (coach.busy || coach.status !== 'ready') return;
-  if (text) S.messages.push({ id: uid(), role: auto ? 'app' : 'user', text, at: new Date().toISOString(), ...(auto ? { auto: true } : {}) });
-  coach.busy = true; coach.stream = ''; coach.progress = ''; coach.notes = []; coach.error = '';
-  save(); refreshCoach();
-  const ctl = coach.ctl = new AbortController();
-  let ok = false;
-  const textMode = coach.mode === 'text';
-  try {
-    const res = await coach.sample(coachInput(), {
-      ...(textMode ? {} : { tools: coachTools() }), signal: ctl.signal, modelTier: ui.coachTier || 'default',
-      onText: ({ text: t }) => { coach.stream = textMode ? splitActions(t).text : t; updateStream(); }
-    });
-    let reply = res.text;
-    if (textMode) {
-      const { text: shown, actions, error } = splitActions(res.text);
-      reply = shown || '(тренер только обновил данные)';
-      if (error) coach.notes.push(`действия не выполнены: ${error}`);
-      if (actions) runActions(actions);
-    }
-    S.messages.push({ id: uid(), role: 'assistant', text: reply, at: new Date().toISOString(), notes: coach.notes, ...(res.truncated ? { cut: true } : {}) });
-    ok = true;
-  } catch (e) {
-    const code = e && e.code;
-    if (code === 'tools_unavailable' && !textMode) {
-      // Окно не умеет инструменты — переходим на действия блоком и повторяем тот же запрос.
-      coach.mode = 'text'; coach.busy = false; coach.ctl = null; coach.notes = [];
-      return coachSend('', { auto });
-    }
-    if (e && e.text && code !== 'refused') S.messages.push({ id: uid(), role: 'assistant', text: e.text, at: new Date().toISOString(), notes: coach.notes, cut: true });
-    else if (coach.notes.length) S.messages.push({ id: uid(), role: 'assistant', text: '(ответ прервался)', at: new Date().toISOString(), notes: coach.notes, cut: true });
-    if (code !== 'cancelled') coach.error = COACH_ERRORS[code] || 'Связь с Claude прервалась. Нажмите «Повторить».';
-    if (['not_granted', 'sampling_disabled', 'capability_disabled', 'capability_removed', 'not_declared'].includes(code)) { coach.status = 'off'; coach.reason = coach.error; }
-  } finally {
-    coach.busy = false; coach.ctl = null; coach.stream = ''; coach.progress = '';
-    save(); if (ui.tab === 'claude') render();
-  }
-  // Если после ответа в плане остались нарушения — один раз возвращаем их тренеру сами, без участия человека.
-  if (ok && !auto && S.draft) {
-    const ch = planChecks(S.draft, S.tradeoffs);
-    if (ch.violations.length) coachSend(`[Сообщение приложения] В черновике остались нарушения:\n${ch.violations.map(v => `- ${v}`).join('\n')}\nИсправь план через set_plan (или назови жертву в tradeoffs) и коротко скажи, что изменил.`, { auto: true });
-  }
-}
-async function coachAccept() {
-  const S = session();
-  if (!S.draft) return;
-  const ch = planChecks(S.draft, S.tradeoffs);
-  if (ch.violations.length || openIssues(S).length) { toast('Сначала тренер должен закрыть нарушения и замечания'); return; }
-  coachSnapshot();
-  const cur = currentPlan();
-  const plan = { ...JSON.parse(JSON.stringify(S.draft)), createdAt: new Date().toISOString(),
-    warnings: [...(S.draft.warnings || []), ...ch.warnings, ...S.tradeoffs.map(t => `Ниже ориентира: ${MUSCLE_LABEL[t.group]} — ${t.reason}`)] };
-  // Повторное принятие в том же разговоре обновляет принятый план, а не добавляет второй.
-  if (S.acceptedPlanId && cur && cur.id === S.acceptedPlanId) { plan.id = cur.id; state.plans[state.plans.length - 1] = plan; }
-  else { plan.id = uid(); state.plans.push(plan); }
-  S.acceptedPlanId = plan.id;
-  rememberMuscles(plan);
-  S.messages.push({ id: uid(), role: 'app', text: `План «${plan.title}» принят и показан на вкладке «Сегодня».`, at: new Date().toISOString() });
-  save(); toast('План принят'); setTab('today');
-}
-
-// Простое форматирование ответа: абзацы, переносы, **жирный**, `код`.
-const mdLite = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>');
-function chatLogHtml() {
-  const S = session();
-  if (!S.messages.length && !coach.busy) {
-    return `<div class="chat-empty">
-      <p><b>Напишите тренеру, как прошла тренировка</b>: веса, повторы, ощущения, сон, вес тела, пожелания и вопросы. Он запишет тренировку в историю, соберёт план справа и сам проверит его: время, баланс групп, суперсеты, ваши правила.</p>
-      <p class="small muted">Если тренер ошибся, скажите об этом: он отметит замечание, исправит план и запомнит правило, чтобы не повторять ошибку. Кнопка ⚑ у сообщения делает его замечанием сразу.</p>
-      <div class="row"><button class="btn sm" data-act="coach-quick" data-text="Собери план на следующую тренировку.">Собрать план на следующую тренировку</button></div>
-    </div>`;
-  }
-  const bubble = (m) => {
-    if (m.role === 'app' && m.auto) return `<details class="msg app auto"><summary>Приложение вернуло тренеру нарушения: ${(m.text.match(/\n- /g) || []).length}</summary><div>${esc(m.text.replace(/^\[Сообщение приложения\]\s*/, ''))}</div></details>`;
-    if (m.role === 'app') return `<div class="msg app">${esc(m.text)}</div>`;
-    if (m.role === 'user') return `<div class="msg user"><div class="bubble">${mdLite(m.text)}</div>
-      <button class="flag" data-act="coach-flag" data-id="${esc(m.id)}" title="Отметить как замечание" aria-label="Отметить как замечание">⚑</button></div>`;
-    return `<div class="msg coach-msg"><div class="bubble">${mdLite(m.text)}${m.cut ? '<div class="small muted">Ответ оборвался.</div>' : ''}</div>
-      ${m.notes && m.notes.length ? `<ul class="notes">${m.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}</div>`;
-  };
-  return S.messages.map(bubble).join('') + (coach.busy ? `<div class="msg coach-msg" id="streamMsg">${streamHtml()}</div>` : '')
-    + (coach.error ? `<div class="msg app bad">${esc(coach.error)} ${coach.status === 'ready' ? '<button class="btn sm" data-act="coach-retry">Повторить</button>' : ''}</div>` : '');
-}
-function streamHtml() {
-  return `<div class="bubble">${coach.stream ? mdLite(coach.stream) : '<span class="muted">Тренер думает…</span>'}</div>
-    ${coach.progress ? `<div class="small muted">${esc(coach.progress)}</div>` : ''}
-    ${coach.notes.length ? `<ul class="notes">${coach.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}`;
-}
-function updateStream() { const el = $('#streamMsg'); if (el) el.innerHTML = streamHtml(); }
-function refreshCoach() {
-  if (ui.tab !== 'claude' || !$('#chatLog')) return;
-  $('#chatLog').innerHTML = chatLogHtml();
-  $('#coachSend').disabled = coach.busy; $('#coachStop').hidden = !coach.busy;
-  refreshCoachPanel();
-  $('#chatLog').lastElementChild?.scrollIntoView({ block: 'nearest' });
-}
-function refreshCoachPanel() {
-  const el = $('#coachPanel'); if (el) el.innerHTML = coachPanelHtml();
-  const mini = $('#coachMini'); if (mini) mini.innerHTML = coachMiniHtml();
-}
-// Короткий статус черновика у поля ввода: на телефоне панель плана ниже чата.
-function coachMiniHtml() {
-  const S = session();
-  if (!S.draft) return 'Ctrl+Enter — отправить';
-  const ch = planChecks(S.draft, S.tradeoffs), open = openIssues(S).length;
-  return `<a href="#coachPanel" class="mini-link">⏱ ~${ch.minutes}/${ch.target} мин · ${ch.violations.length ? `нарушений ${ch.violations.length}` : 'проверки ✓'}${open ? ` · замечаний ${open}` : ''}</a>`;
-}
-function coachPanelHtml() {
-  const S = session();
-  const open = openIssues(S);
-  if (!S.draft) return `<div class="card soft small">Черновика плана пока нет: тренер соберёт его в первом ответе и покажет здесь.${open.length ? ` Открытых замечаний: ${open.length}.` : ''}</div>${issuesHtml(S)}`;
-  const ch = planChecks(S.draft, S.tradeoffs);
-  const blocked = ch.violations.length || open.length;
-  const accepted = S.acceptedPlanId && (currentPlan() || {}).id === S.acceptedPlanId && JSON.stringify({ ...currentPlan(), createdAt: 0, warnings: 0 }) === JSON.stringify({ ...S.draft, id: S.acceptedPlanId, createdAt: 0, warnings: 0 });
-  const pane = ui.coachPane || 'plan';
-  const tl = planItems(S.draft);
-  return `<div class="card">
-    <div class="row" style="justify-content:space-between"><b>${esc(S.draft.title)}</b><span class="small muted">${S.draft.date ? fmtDate(S.draft.date) : ''}</span></div>
-    <div class="row small" style="margin:6px 0 10px">
-      <span class="badge ${ch.minutes > ch.target + TIME_SLACK_MIN ? 'bad' : ''}">⏱ ~${ch.minutes} из ${ch.target} мин</span>
-      <span class="badge ${ch.supersets > profile().maxSupersets ? 'bad' : ''}">суперсетов ${ch.supersets}/${profile().maxSupersets}</span>
-      <span class="badge ${ch.violations.length ? 'bad' : 'good'}">${ch.violations.length ? `нарушений ${ch.violations.length}` : 'проверки пройдены'}</span>
-      ${open.length ? `<span class="badge warn">замечаний открыто ${open.length}</span>` : ''}
-    </div>
-    <button class="btn primary" style="width:100%" data-act="coach-accept" ${blocked || coach.busy ? 'disabled' : ''}>${accepted ? '✓ План принят' : 'Принять план'}</button>
-    ${blocked ? `<div class="small muted" style="margin-top:6px">Принять можно, когда тренер исправит нарушения и закроет замечания.</div>` : ''}
-  </div>
-  <div class="seg" style="margin-bottom:10px">
-    ${[['plan', 'План'], ['checks', `Проверки${ch.violations.length ? ` (${ch.violations.length})` : ''}`], ['issues', `Замечания${S.issues.length ? ` (${open.length}/${S.issues.length})` : ''}`]]
-      .map(([k, l]) => `<button class="${pane === k ? 'on' : ''}" data-act="coach-pane" data-pane="${k}">${l}</button>`).join('')}
-  </div>
-  ${pane === 'plan' ? `<div class="card">${planTimelineHtml(tl, true)}</div>` : pane === 'checks' ? checksHtml(ch) : issuesHtml(S)}`;
-}
-function checksHtml(ch) {
-  const b = ch.balance;
-  return `<div class="card">
-    ${ch.violations.length ? `<h3>Нарушения</h3>${ch.violations.map(v => `<div class="chk bad">✗ ${esc(v)}</div>`).join('')}` : '<div class="chk good">✓ Нарушений нет</div>'}
-    ${ch.warnings.length ? `<h3 style="margin-top:10px">Обратить внимание</h3>${ch.warnings.map(v => `<div class="chk warn">! ${esc(v)}</div>`).join('')}` : ''}
-    <h3 style="margin-top:12px">Баланс за неделю</h3>
-    <div class="small muted" style="margin-bottom:4px">Рабочие подходы: прошлая тренировка${b.prevDate ? ` (${fmtDate(b.prevDate)})` : ''} + этот план; косвенная нагрузка — половина подхода.</div>
-    <div style="overflow-x:auto"><table class="data bal">
-      <tr><th>Группа</th><th>Прошлая</th><th>План</th><th>Итого</th><th>Мин.</th></tr>
-      ${b.rows.map(r => `<tr class="${r.status}"><td>${esc(r.label)}${r.status === 'tradeoff' ? `<div class="small muted">${esc(r.reason)}</div>` : r.status === 'skip' ? '<div class="small muted">не тренируем</div>' : ''}</td>
-        <td>${fmtSets(r.prev)}</td><td>${fmtSets(r.plan)}</td><td><b>${fmtSets(r.total)}</b></td><td>${r.status === 'skip' ? '—' : r.min}</td></tr>`).join('')}
-    </table></div>
-  </div>`;
-}
-function issuesHtml(S) {
-  if (!S.issues.length) return `<div class="card small muted">Замечаний пока нет. Если тренер что-то упустил, скажите ему или нажмите ⚑ у своего сообщения. Действующих правил: ${activeRules().length} (вкладка «Данные»).</div>`;
-  const rules = Object.fromEntries((state.rules || []).map(r => [r.id, r]));
-  return `<div class="card">${[...S.issues].sort((a, b) => (a.status === 'fixed') - (b.status === 'fixed')).map(x => `<div class="wish">
-    <div class="row"><span class="badge ${x.status === 'fixed' ? 'good' : 'warn'}">${x.status === 'fixed' ? '✓ исправлено' : 'открыто'}</span><b class="grow">${esc(issueNo(x))}. ${esc(x.text)}</b></div>
-    ${x.fix ? `<div class="small" style="margin-top:2px">${esc(x.fix)}</div>` : ''}
-    ${x.ruleId && rules[x.ruleId] ? `<div class="small muted">Правило: ${esc(rules[x.ruleId].text)}${rules[x.ruleId].check ? ` · проверяет приложение: ${esc(checkLabel(rules[x.ruleId].check))}` : ''}</div>` : ''}
-  </div>`).join('')}<p class="small muted" style="margin-bottom:0">Исправленные замечания становятся постоянными правилами тренера — они на вкладке «Данные».</p></div>`;
-}
-function viewCoachChat() {
-  const S = session();
-  if (!S.messages.length && ui.report && !ui.coachInput) ui.coachInput = ui.report;
-  return `<div class="row" style="margin-bottom:8px"><h2 class="grow" style="margin:0">Тренер</h2>
-    <select id="coachTier" style="width:auto" aria-label="Модель">
-      <option value="default" ${(ui.coachTier || 'default') === 'default' ? 'selected' : ''}>Обычная модель</option>
-      <option value="complex" ${ui.coachTier === 'complex' ? 'selected' : ''}>Сильная, но дольше</option>
-    </select>
-    <button class="btn sm" data-act="coach-new" ${coach.busy ? 'disabled' : ''}>Новый разговор</button></div>
-  ${undoHtml()}
-  <div class="coach">
-    <section class="coach-main">
-      <div id="chatLog" class="chat-log">${chatLogHtml()}</div>
-      <div class="composer">
-        <textarea id="coachInput" placeholder="Сообщение тренеру…">${esc(ui.coachInput || '')}</textarea>
-        <div class="row">
-          <span class="small muted grow" id="coachMini">${coachMiniHtml()}</span>
-          <button class="btn" id="coachStop" data-act="coach-stop" ${coach.busy ? '' : 'hidden'}>Стоп</button>
-          <button class="btn primary" id="coachSend" data-act="coach-send" ${coach.busy ? 'disabled' : ''}>Отправить</button>
-        </div>
-      </div>
-    </section>
-    <aside id="coachPanel" class="coach-panel">${coachPanelHtml()}</aside>
-  </div>`;
-}
-function rulesHtml() {
-  const rules = state.rules || [];
-  return `<h2>Правила тренера</h2>
-  <div class="card">
-    <p class="small muted" style="margin-top:0">Правила выработаны на ошибках тренера: каждое исправленное замечание становится правилом. Все действующие правила уходят тренеру в каждый разговор, а правила с проверкой приложение проверяет в каждой версии плана само.</p>
-    ${rules.length ? rules.map(r => `<div class="wish">
-      <div class="row"><span class="grow ${r.active === false ? 'muted' : ''}">${esc(r.text)}</span>
-        <button class="btn sm" data-act="rule-toggle" data-id="${esc(r.id)}">${r.active === false ? 'Включить' : 'Выключить'}</button>
-        <button class="btn sm" data-act="rule-edit" data-id="${esc(r.id)}">✎</button>
-        <button class="btn sm danger" data-act="rule-del" data-id="${esc(r.id)}" aria-label="Удалить">✕</button></div>
-      <div class="small muted">${r.date ? fmtDate(r.date) : ''}${r.check ? ` · проверяет приложение: ${esc(checkLabel(r.check))}` : ''}${r.issue ? ` · из замечания: ${esc(r.issue)}` : ''}</div>
-    </div>`).join('') : '<p class="small muted">Правил пока нет.</p>'}
-    <button class="btn sm" data-act="rule-add" style="margin-top:8px">+ Добавить правило</button>
-  </div>`;
-}
-async function coachAction(act, b) {
-  const S = session();
-  switch (act) {
-    case 'coach-perms': {
-      const perms = await capability('permissions');
-      try { await perms.manage(); } catch (e) { toast('Откройте меню страницы → «Разрешения»'); return; }
-      coach.status = 'init'; coach.error = ''; render(); await coachInit(); return;
-    }
-    case 'coach-send': {
-      const t = (ui.coachInput || '').trim(); if (!t) return;
-      ui.coachInput = ''; ui.report = ''; saveUi(); coachSend(t); return;
-    }
-    case 'coach-quick': coachSend(b.dataset.text); return;
-    case 'coach-retry': coachSend(null); return;
-    case 'coach-stop': coach.ctl?.abort(); return;
-    case 'coach-pane': ui.coachPane = b.dataset.pane; saveUi(); refreshCoachPanel(); return;
-    case 'coach-accept': coachAccept(); return;
-    case 'coach-flag': {
-      const m = S.messages.find(x => x.id === b.dataset.id); if (!m) return;
-      const text = await askText('Замечание тренеру (тренер обязан исправить и запомнить правило):', m.text.slice(0, 400), { ok: 'Отметить' });
-      if (!text || !text.trim()) return;
-      S.issues.push({ id: `i${S.issues.length + 1}`, text: text.trim(), status: 'open', source: 'me', at: new Date().toISOString() });
-      save(); refreshCoach(); toast('Замечание отмечено — тренер увидит его в следующем ответе'); return;
-    }
-    case 'coach-new': {
-      if (S.messages.length && S.draft && !S.acceptedPlanId && !await ask('Начать новый разговор? Непринятый черновик плана пропадёт. Записанная тренировка и правила останутся.', { ok: 'Начать новый' })) return;
-      state.coach = newSession(); safeDel(UNDO_KEY); coach.error = ''; save(); render(); return;
-    }
-    case 'rule-add': {
-      const t = await askText('Новое правило для тренера:', ''); if (!t || !t.trim()) return;
-      addRule(t, null, 'me'); save(); render(); return;
-    }
-    case 'rule-edit': {
-      const r = (state.rules || []).find(x => x.id === b.dataset.id); if (!r) return;
-      const t = await askText('Правило:', r.text); if (t === null || !t.trim()) return;
-      r.text = t.trim(); save(); render(); return;
-    }
-    case 'rule-toggle': { const r = (state.rules || []).find(x => x.id === b.dataset.id); if (r) { r.active = r.active === false; save(); render(); } return; }
-    case 'rule-del': {
-      if (!await ask('Удалить правило?', { ok: 'Удалить', danger: true })) return;
-      state.rules = (state.rules || []).filter(x => x.id !== b.dataset.id); save(); render(); return;
-    }
-  }
 }
 
 /* =====================================================================
@@ -2614,18 +1812,17 @@ function viewSettings() {
       ${[...log].reverse().slice(0, 30).map(x => `<div style="margin-top:6px"><b>${fmtDate(x.date)}</b> · ${esc(PROFILE_LABELS[x.field] || x.field)} · ${x.by === 'coach' ? 'тренер' : 'вручную'}${x.reason ? ` — ${esc(x.reason)}` : ''}
         <div class="muted">было: ${esc(x.from ?? '—') || '—'}</div><div>стало: ${esc(x.to ?? '—') || '—'}</div></div>`).join('')}</details>` : ''}
   </div>
-  ${rulesHtml()}
   ${insistedHtml()}
   <h2>Данные</h2>
   <div class="card">
-    <p class="small" style="margin-top:0">${cloud.status === 'ready' ? `Данные хранятся <b>на claude.ai</b> и одинаковы на всех устройствах, где вы открываете эту страницу.${cloud.error ? ` <span class="badge bad">${esc(cloud.error)}</span>` : ''} Бэкап в файл можно сделать в любой момент.` : 'Всё хранится в <b>localStorage этого браузера</b>. Данные не уходят в интернет, но пропадут при очистке данных сайта или в другом браузере/устройстве. Периодически сохраняйте бэкап в файл.'}</p>
+    <p class="small" style="margin-top:0">Всё хранится в <b>localStorage этого браузера</b>. Данные не уходят в интернет, но пропадут при очистке данных сайта или в другом браузере/устройстве. Периодически сохраняйте бэкап в файл.</p>
     <div class="row">
       <button class="btn primary" data-act="export-json">Скачать бэкап (.json)</button>
       <button class="btn" data-act="import-json">Восстановить из файла</button>
     </div>
     <p class="small muted">Записей: ${state.history.length} · планов: ${state.plans.length}</p>
   </div>
-  ${IN_CLAUDE ? '' : `<div class="card">
+  <div class="card">
     <h3>Автобэкап в GitHub</h3>
     <p class="small" style="margin-top:0">После каждого сохранения (тренировка, ответ тренера, правка, откат) данные сами коммитятся в файл <code>${esc(gh.path)}</code> вашего репозитория. Каждая версия остаётся в истории git.</p>
     <p class="small">${ghStatusHtml()}</p>
@@ -2642,7 +1839,7 @@ function viewSettings() {
     <label class="f">Токен<input id="ghToken" type="password" placeholder="github_pat_…" autocomplete="off"></label>
     <label class="f">Файл в репозитории<input id="ghPath" value="${esc(gh.path)}"></label>
     <div class="row" style="margin-top:8px"><button class="btn primary" data-act="gh-connect">Подключить</button></div>`}
-  </div>`}
+  </div>
   <div class="card">
     <h3>Сброс</h3>
     <div class="row">
@@ -3006,7 +2203,6 @@ document.addEventListener('click', async (e) => {
   const act = b.dataset.act;
   const i = b.dataset.ex !== undefined ? +b.dataset.ex : null;
   const j = b.dataset.set !== undefined ? +b.dataset.set : null;
-  if (/^(coach|rule)-/.test(act)) return coachAction(act, b);
   switch (act) {
     case 'goto': setTab(b.dataset.tab); break;
     case 'set-status':
@@ -3029,7 +2225,7 @@ document.addEventListener('click', async (e) => {
       saveDraft(); setTab('log'); break;
     }
     case 'del-entry':
-      if (await ask('Удалить запись?', { ok: 'Удалить', danger: true })) { state.history = state.history.filter(x => x.id !== b.dataset.id); save(); render(); }
+      if (confirm('Удалить запись?')) { state.history = state.history.filter(x => x.id !== b.dataset.id); save(); render(); }
       break;
     case 'copy-prompt': toast(await copyText(buildPrompt(ui.promptCount)) ? 'Промпт тренера скопирован — вставьте его в чат Claude' : 'Не удалось скопировать — выделите текст вручную'); break;
     case 'dl-prompt': download(`workout-prompt-${todayIso()}.md`, buildPrompt(ui.promptCount), 'text/markdown'); break;
@@ -3047,7 +2243,7 @@ document.addEventListener('click', async (e) => {
     }
     case 'edit-profile': {
       const f = b.dataset.field, cur = profile()[f];
-      const v = await askText(`${PROFILE_LABELS[f]}:`, cur ?? '');
+      const v = prompt(`${PROFILE_LABELS[f]}:`, cur ?? '');
       if (v === null) break;
       const done = applyProfileUpdate({ [PROFILE_NUMBERS[f] ? PROFILE_NUMBERS[f][0] : f]: v }, 'me', '');
       if (done.length) { save(); toast('Сохранено'); render(); }
@@ -3055,7 +2251,7 @@ document.addEventListener('click', async (e) => {
     }
     case 'reset-profile': {
       const f = b.dataset.field;
-      if (!await ask(`Вернуть исходное значение поля «${PROFILE_LABELS[f]}»?`)) break;
+      if (!confirm(`Вернуть исходное значение поля «${PROFILE_LABELS[f]}»?`)) break;
       const from = profile()[f];
       const { [f]: _, ...rest } = state.profileEdits || {};
       state.profileEdits = rest;
@@ -3083,22 +2279,21 @@ document.addEventListener('click', async (e) => {
     case 'gh-push': b.disabled = true; toast(await ghPush(true) ? 'Бэкап отправлен в GitHub' : gh.lastError); break;
     case 'gh-restore': await ghRestore(); break;
     case 'gh-off':
-      if (await ask('Отключить автобэкап в GitHub? Токен удалится из этого браузера, файл в репозитории останется.')) {
+      if (confirm('Отключить автобэкап в GitHub? Токен удалится из этого браузера, файл в репозитории останется.')) {
         gh = { repo: gh.repo, token: '', path: gh.path, sha: '', pushedHash: '', dirty: false, lastOk: '', lastError: '' }; saveGh(); render();
       }
       break;
     case 'load-seed':
-      if (state.history.length && !await ask('Стартовые данные заменят текущие. Продолжить? (Сначала можно скачать бэкап.)')) break;
+      if (state.history.length && !confirm('Стартовые данные заменят текущие. Продолжить? (Сначала можно скачать бэкап.)')) break;
       state = { ...buildSeed(), profileEdits: state.profileEdits || {}, profileLog: state.profileLog || [] }; save(); safeDel(UNDO_KEY); draft = null; saveDraft(); toast('Стартовые данные загружены'); setTab('today'); break;
     case 'wipe':
-      if (await ask('Удалить все тренировки, планы и профиль? Это нельзя отменить.', { ok: 'Удалить всё', danger: true })) { state = emptyState(); save(); safeDel(UNDO_KEY); draft = null; saveDraft(); setTab('today'); }
+      if (confirm('Удалить все тренировки, планы и профиль? Это нельзя отменить.')) { state = emptyState(); save(); safeDel(UNDO_KEY); draft = null; saveDraft(); setTab('today'); }
       break;
   }
 });
 
 document.addEventListener('input', (e) => {
   const el = e.target;
-  if (el.id === 'coachInput') { ui.coachInput = el.value; saveUi(); return; }
   if (el.id === 'reportText') {
     ui.report = el.value; saveUi();
     const pr = buildPrompt(ui.promptCount);
@@ -3120,20 +2315,16 @@ document.addEventListener('input', (e) => {
 document.addEventListener('change', (e) => {
   const el = e.target;
   if (el.id === 'promptCount') { ui.promptCount = +el.value; saveUi(); render(); }
-  if (el.id === 'coachTier') { ui.coachTier = el.value; saveUi(); }
   if (ui.tab === 'log' && (el.dataset.k === 'unit' || el.dataset.k === 'warmup')) render();
 });
 
-document.addEventListener('keydown', (e) => {
-  if (e.target.id === 'coachInput' && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); coachAction('coach-send'); }
-});
 $('#fileInput').addEventListener('change', async (e) => {
   const file = e.target.files[0]; e.target.value = '';
   if (!file) return;
   try {
     const data = JSON.parse(await file.text());
     if (!Array.isArray(data.history) || !Array.isArray(data.plans)) throw new Error();
-    if (!await ask(`Восстановить ${data.history.length} записей и ${data.plans.length} планов? Текущие данные будут заменены.`)) return;
+    if (!confirm(`Восстановить ${data.history.length} записей и ${data.plans.length} планов? Текущие данные будут заменены.`)) return;
     delete data.profile;
     state = { ...emptyState(), ...data };
     save(); safeDel(UNDO_KEY); toast('Данные восстановлены'); render();
@@ -3142,21 +2333,8 @@ $('#fileInput').addEventListener('change', async (e) => {
 
 let resizeT; window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => { if (ui.tab === 'progress') mountChart(); }, 150); });
 // При первом запуске подставляем стартовые данные (текущая программа + первый план).
-// На claude.ai сначала читаем хранилище: данные там главнее копии в браузере.
-async function boot() {
-  const coachReady = coachInit();
-  if (IN_CLAUDE) {
-    if (state) render(); else $('#app').innerHTML = '<div class="card empty"><p>Загружаю данные…</p></div>';
-    let remote = null;
-    try { remote = await cloudLoad(); } catch (e) { cloud.status = 'off'; }
-    if (remote) { state = remote; safeSet(STORE_KEY, JSON.stringify(state)); }
-    else if (cloud.status === 'ready' && state) cloudSchedule();   // хранилище пустое — переносим данные этого браузера
-  }
-  if (!state) { state = buildSeed(); save(); } else migrateSeedPlan();
-  render();
-  await coachReady;
-}
-boot();
+if (!state) { state = buildSeed(); save(); } else migrateSeedPlan();
+render();
 // Если прошлый автобэкап не дошёл (не было сети, закрыли вкладку) — досылаем.
 if (ghOn() && gh.dirty) ghPush();
 window.addEventListener('online', () => { if (ghOn() && gh.dirty) ghPush(); });
