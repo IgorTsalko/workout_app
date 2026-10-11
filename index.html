@@ -371,6 +371,7 @@ function save() { safeSet(STORE_KEY, JSON.stringify(state)); ghSchedule(); cloud
    Тот же файл, открытый локально, работает как раньше: localStorage и копирование промпта.
    ===================================================================== */
 const IN_CLAUDE = !!(window.claude && typeof window.claude.use === 'function');
+const ARTIFACT_URL = 'https://claude.ai/artifact/H5pB77R9PJ9rpRKe5eFiWS';
 const capCache = {};
 function capability(name) {
   if (!IN_CLAUDE) return Promise.resolve(null);
@@ -1679,8 +1680,13 @@ function buildPrompt(count, opts = {}) {
 
 function viewClaude() {
   if (coach.status === 'ready') return viewCoachChat();
-  return (coach.status === 'init' ? '<div class="card small muted">Подключаю тренера…</div>'
-    : IN_CLAUDE && coach.reason ? `<div class="callout warn">${esc(coach.reason)} Ниже — прежний способ: скопировать промпт в отдельный чат.</div>` : '') + viewClaudeManual();
+  if (coach.status === 'init') return '<h2>Тренер</h2><div class="card empty"><p>Подключаю тренера…</p></div>';
+  const head = IN_CLAUDE
+    ? `<div class="callout warn" style="margin-bottom:12px"><p style="margin-top:0"><b>Чат с тренером не включился.</b> ${esc(coach.reason)}</p>
+        <p class="small">Откройте меню страницы → «Разрешения» и разрешите доступ к Claude, затем обновите страницу.</p>
+        <button class="btn sm" data-act="coach-perms">Открыть разрешения</button></div>`
+    : `<div class="callout" style="margin-bottom:12px"><b>Чат с тренером работает на странице на claude.ai:</b> <a href="${ARTIFACT_URL}" target="_blank" rel="noopener">${ARTIFACT_URL}</a>. Там тренер сам правит план, а приложение проверяет его. Здесь, в файле, — прежний способ через копирование промпта.</div>`;
+  return head + (IN_CLAUDE ? `<details><summary>Прежний способ: скопировать промпт в отдельный чат</summary>${viewClaudeManual()}</details>` : viewClaudeManual());
 }
 function viewClaudeManual() {
   const count = ui.promptCount;
@@ -2057,15 +2063,18 @@ async function importPlan() {
    Тренер в приложении: чат с Claude (капабилити sample), план правится инструментами,
    проверки считает код, замечания превращаются в постоянные правила.
    ===================================================================== */
-const coach = { sample: null, status: IN_CLAUDE ? 'init' : 'off', reason: '', busy: false, ctl: null, stream: '', progress: '', notes: [], error: '' };
+const coach = { sample: null, mode: 'tools', status: IN_CLAUDE ? 'init' : 'off', reason: '', busy: false, ctl: null, stream: '', progress: '', notes: [], error: '' };
 async function coachInit() {
   if (!IN_CLAUDE) return;
   const sample = await capability('sample');
   const lim = sample ? await sample.limits().catch(() => null) : null;
-  if (!sample || !lim || !lim.tools) {
+  if (!sample) {
     coach.status = 'off';
-    coach.reason = sample ? 'В этом окне тренер не может править план сам.' : 'В этом окне чат с тренером недоступен.';
-  } else { coach.sample = sample; coach.status = 'ready'; }
+    coach.reason = 'Claude не подключён к этой странице: окно не дало доступ к Claude.';
+  } else {
+    // Где инструменты недоступны (например, в части приложений), тренер присылает действия блоком в конце ответа.
+    coach.sample = sample; coach.status = 'ready'; coach.mode = lim && lim.tools ? 'tools' : 'text';
+  }
   if (ui.tab === 'claude') render();
 }
 const newSession = () => ({ id: uid(), startedAt: new Date().toISOString(), basePlanId: (currentPlan() || {}).id || null,
@@ -2134,6 +2143,9 @@ function coachDataSections(L) {
   L.push(S.issues.length ? S.issues.map(x => `- ${x.id} [${x.status === 'fixed' ? 'исправлено' : 'ОТКРЫТО'}]: ${x.text}${x.fix ? ` — ${x.fix}` : ''}`).join('\n') : 'Пока нет.');
   L.push('');
   L.push(`## Инструменты`);
+  if (coach.mode === 'text') {
+    L.push(`В этом окне инструменты вызываются не напрямую, а блоком в самом конце ответа, после текста. Блок начинается строкой \`\`\`actions и заканчивается строкой \`\`\`, внутри один JSON-объект: {"set_plan": {plan, tradeoffs}, "update_log": {...}} — любые из двух ключей, поля те же, что ниже. Приложение выполнит действия по порядку и уберёт блок с экрана. Результат проверок ты увидишь в разделе «Проверки приложения» со следующим сообщением; если нарушения останутся, приложение само пришлёт их тебе. Поэтому в тексте не утверждай, что нарушений нет, пока не видел проверку.`);
+  }
   L.push(`set_plan({plan, tradeoffs}) — plan в формате ниже, целиком; tradeoffs — [{group, reason}] для групп ниже минимума, которые сознательно не добираешь (без поля — остаются прошлые). Возвращает проверки.`);
   L.push(`update_log({workout, issues, rules, profile, muscles}) — любые поля по отдельности. issues: [{id?, text, status: "open"|"fixed", fix?, rule?, check?}] — новое замечание без id, закрытие — с id. rules: [{text, check?}] — новое постоянное правило без замечания. check: {type: "avoid", pattern} | {type: "require_group", group} | {type: "min_sets", group, sets} | {type: "skip_group", group} | {type: "max_supersets", n} | {type: "max_minutes", n} | {type: "max_new", n}. profile — как profile_update: ${PROFILE_FIELDS.map(([k]) => k).join(', ')}, session_minutes, max_supersets, reason. muscles: {"Название упражнения": {primary: [...], secondary: [...]}}.`);
   L.push(`Формат plan (как в приложении): {date, title, focus, rest_between_exercises_sec, summary, recommendation, warnings: [], answers: [{question, answer}], wishes_review: [{wish, decision: "принято"|"изменено"|"не принято"|"принято по настоянию", reason}], notes, exercises: [...]}. Упражнение: {name, sets, reps, unit: "reps"|"sec", weight (кг; 0 — свой вес; null — подобрать, только для нового), rest_sec, rpe (50–100), change (до четырёх слов), notes, sets_detail?: [{weight, reps, warmup?}], muscles: {primary: [...], secondary: [...]}}. Суперсет: {type: "superset", name, rounds, rest_sec, change, notes, parts: [упражнения без rest_sec, с muscles, можно sets_detail — рабочих подходов столько, сколько кругов]}. Разминка и заминка — первый и последний пункты: {kind: "warmup"|"cooldown", name, duration_min, notes}. Названия — как в истории.`);
@@ -2281,6 +2293,21 @@ function coachInput() {
   }));
   return [{ role: 'user', content: buildPrompt(ui.promptCount, { chat: true }) }, ...turns];
 }
+// Режим без инструментов: действия приходят блоком ```actions в конце ответа.
+function splitActions(t) {
+  const i = String(t || '').search(/```actions/);
+  if (i < 0) return { text: String(t || '').trim(), actions: null };
+  const text = t.slice(0, i).trim();
+  const body = t.slice(i).replace(/^```actions\s*/, '').replace(/```\s*$/, '').trim();
+  try { return { text, actions: JSON.parse(body) }; } catch (e) { return { text, actions: null, error: 'блок действий не разобрался' }; }
+}
+function runActions(actions) {
+  const tools = Object.fromEntries(coachTools().map(t => [t.name, t]));
+  for (const name of ['update_log', 'set_plan']) {
+    if (!actions || typeof actions[name] !== 'object' || !actions[name]) continue;
+    try { tools[name].execute(actions[name]); } catch (e) { coach.notes.push(`${name}: ${e.message}`); }
+  }
+}
 const COACH_ERRORS = {
   not_granted: 'Странице не разрешено обращаться к Claude. Разрешите это в меню страницы и обновите её.',
   sampling_disabled: 'Claude недоступен для этого аккаунта.',
@@ -2298,19 +2325,32 @@ async function coachSend(text, { auto = false } = {}) {
   save(); refreshCoach();
   const ctl = coach.ctl = new AbortController();
   let ok = false;
+  const textMode = coach.mode === 'text';
   try {
     const res = await coach.sample(coachInput(), {
-      tools: coachTools(), signal: ctl.signal, modelTier: ui.coachTier || 'default',
-      onText: ({ text: t }) => { coach.stream = t; updateStream(); }
+      ...(textMode ? {} : { tools: coachTools() }), signal: ctl.signal, modelTier: ui.coachTier || 'default',
+      onText: ({ text: t }) => { coach.stream = textMode ? splitActions(t).text : t; updateStream(); }
     });
-    S.messages.push({ id: uid(), role: 'assistant', text: res.text, at: new Date().toISOString(), notes: coach.notes, ...(res.truncated ? { cut: true } : {}) });
+    let reply = res.text;
+    if (textMode) {
+      const { text: shown, actions, error } = splitActions(res.text);
+      reply = shown || '(тренер только обновил данные)';
+      if (error) coach.notes.push(`действия не выполнены: ${error}`);
+      if (actions) runActions(actions);
+    }
+    S.messages.push({ id: uid(), role: 'assistant', text: reply, at: new Date().toISOString(), notes: coach.notes, ...(res.truncated ? { cut: true } : {}) });
     ok = true;
   } catch (e) {
     const code = e && e.code;
+    if (code === 'tools_unavailable' && !textMode) {
+      // Окно не умеет инструменты — переходим на действия блоком и повторяем тот же запрос.
+      coach.mode = 'text'; coach.busy = false; coach.ctl = null; coach.notes = [];
+      return coachSend('', { auto });
+    }
     if (e && e.text && code !== 'refused') S.messages.push({ id: uid(), role: 'assistant', text: e.text, at: new Date().toISOString(), notes: coach.notes, cut: true });
     else if (coach.notes.length) S.messages.push({ id: uid(), role: 'assistant', text: '(ответ прервался)', at: new Date().toISOString(), notes: coach.notes, cut: true });
     if (code !== 'cancelled') coach.error = COACH_ERRORS[code] || 'Связь с Claude прервалась. Нажмите «Повторить».';
-    if (['not_granted', 'sampling_disabled', 'tools_unavailable', 'capability_disabled', 'capability_removed', 'not_declared'].includes(code)) { coach.status = 'off'; coach.reason = coach.error; }
+    if (['not_granted', 'sampling_disabled', 'capability_disabled', 'capability_removed', 'not_declared'].includes(code)) { coach.status = 'off'; coach.reason = coach.error; }
   } finally {
     coach.busy = false; coach.ctl = null; coach.stream = ''; coach.progress = '';
     save(); if (ui.tab === 'claude') render();
@@ -2477,6 +2517,11 @@ function rulesHtml() {
 async function coachAction(act, b) {
   const S = session();
   switch (act) {
+    case 'coach-perms': {
+      const perms = await capability('permissions');
+      try { await perms.manage(); } catch (e) { toast('Откройте меню страницы → «Разрешения»'); return; }
+      coach.status = 'init'; coach.error = ''; render(); await coachInit(); return;
+    }
     case 'coach-send': {
       const t = (ui.coachInput || '').trim(); if (!t) return;
       ui.coachInput = ''; ui.report = ''; saveUi(); coachSend(t); return;
@@ -3099,6 +3144,7 @@ let resizeT; window.addEventListener('resize', () => { clearTimeout(resizeT); re
 // При первом запуске подставляем стартовые данные (текущая программа + первый план).
 // На claude.ai сначала читаем хранилище: данные там главнее копии в браузере.
 async function boot() {
+  const coachReady = coachInit();
   if (IN_CLAUDE) {
     if (state) render(); else $('#app').innerHTML = '<div class="card empty"><p>Загружаю данные…</p></div>';
     let remote = null;
@@ -3108,7 +3154,7 @@ async function boot() {
   }
   if (!state) { state = buildSeed(); save(); } else migrateSeedPlan();
   render();
-  coachInit();
+  await coachReady;
 }
 boot();
 // Если прошлый автобэкап не дошёл (не было сети, закрыли вкладку) — досылаем.
