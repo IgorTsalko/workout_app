@@ -263,12 +263,13 @@ table.data th { color: var(--muted); font-weight: 500; }
 <script>
 'use strict';
 /* =====================================================================
-   Хранилище: localStorage (ключ STORE_KEY) + ручной бэкап в JSON-файл.
+   Хранилище: localStorage (ключ STORE_KEY) + ручной бэкап в JSON-файл + автобэкап в GitHub (GH_KEY).
    ===================================================================== */
 const STORE_KEY = 'workoutApp.v1';
 const DRAFT_KEY = 'workoutApp.draft.v1';
 const UI_KEY = 'workoutApp.ui.v1';
 const UNDO_KEY = 'workoutApp.undo.v1';   // снимок данных до последней загрузки ответа тренера
+const GH_KEY = 'workoutApp.github.v1';   // настройки автобэкапа в GitHub (токен хранится только здесь, в бэкап не попадает)
 
 // Базовый профиль (приложение однопользовательское — меняется прямо здесь).
 // Поля из PROFILE_FIELDS тренер (Claude) может обновлять через profile_update в ответе, а я — вручную на вкладке «Данные».
@@ -317,7 +318,7 @@ function loadState() {
 }
 
 let state = loadState(); // null при первом запуске — заполняется стартовыми данными перед render()
-function save() { safeSet(STORE_KEY, JSON.stringify(state)); }
+function save() { safeSet(STORE_KEY, JSON.stringify(state)); ghSchedule(); }
 
 let ui = { tab: 'today', promptCount: 6, progressEx: '' };
 try { Object.assign(ui, JSON.parse(safeGet(UI_KEY) || '{}')); } catch (e) {}
@@ -346,6 +347,132 @@ function undoImport() {
   safeDel(UNDO_KEY);
   toast('Загрузка откачена');
   setTab('claude');
+}
+
+/* =====================================================================
+   Автобэкап в GitHub: после каждого сохранения данных (тренировка, ответ тренера, правка, откат)
+   приложение коммитит JSON-снимок в один файл репозитория через GitHub API. История версий — это git log файла.
+   ===================================================================== */
+const GH_DEFAULT_PATH = 'workout-backup.json';
+const GH_DELAY_MS = 3000;  // несколько сохранений подряд уходят одним коммитом
+let gh = { repo: '', token: '', path: GH_DEFAULT_PATH, sha: '', pushedHash: '', dirty: false, lastOk: '', lastError: '' };
+try { Object.assign(gh, JSON.parse(safeGet(GH_KEY) || '{}')); } catch (e) {}
+function saveGh() { safeSet(GH_KEY, JSON.stringify(gh)); }
+const ghOn = () => !!(gh.repo && gh.token);
+let ghTimer = null, ghBusy = false;
+
+function hashStr(str) { let h = 5381; for (let i = 0; i < str.length; i++) h = (h * 33 ^ str.charCodeAt(i)) >>> 0; return `${str.length}:${h}`; }
+function utf8ToB64(str) {
+  const bytes = new TextEncoder().encode(str); let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+function backupJson() { return JSON.stringify(state, null, 2); }
+function ghUrl() { return `https://api.github.com/repos/${gh.repo}/contents/${gh.path.split('/').map(encodeURIComponent).join('/')}`; }
+async function ghFetch(url, opts = {}, accept = 'application/vnd.github+json') {
+  const r = await fetch(url, { ...opts, cache: 'no-store', headers: { Accept: accept, Authorization: `Bearer ${gh.token}`, 'X-GitHub-Api-Version': '2022-11-28', ...(opts.headers || {}) } });
+  if (r.status === 401) throw new Error('GitHub не принял токен (401) — проверьте или создайте заново');
+  if (r.status === 403) throw new Error('Нет доступа (403): токену нужно право Contents: Read and write на этот репозиторий');
+  return r;
+}
+// Текущий sha файла в репозитории ('' — файла ещё нет).
+async function ghRemoteSha() {
+  const r = await ghFetch(ghUrl());
+  if (r.status === 404) return '';
+  if (!r.ok) throw new Error(`GitHub ответил ${r.status}`);
+  return (await r.json()).sha || '';
+}
+// Содержимое бэкапа в репозитории (null — файла нет).
+async function ghReadRemote() {
+  const r = await ghFetch(ghUrl(), {}, 'application/vnd.github.raw+json');
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`GitHub ответил ${r.status}`);
+  return JSON.parse(await r.text());
+}
+function ghSchedule() {
+  if (!ghOn()) return;
+  gh.dirty = true; saveGh();
+  clearTimeout(ghTimer); ghTimer = setTimeout(ghPush, GH_DELAY_MS);
+}
+async function ghPush(force = false) {
+  if (!ghOn()) return false;
+  if (ghBusy) { clearTimeout(ghTimer); ghTimer = setTimeout(ghPush, GH_DELAY_MS); return false; }
+  const body = backupJson(), hash = hashStr(body);
+  if (!force && hash === gh.pushedHash) { gh.dirty = false; saveGh(); return true; }
+  ghBusy = true;
+  try {
+    const last = state.history.map(h => h.date).sort().pop();
+    const message = `Бэкап: ${state.history.length} ${plural(state.history.length, 'запись', 'записи', 'записей')}${last ? `, последняя ${last}` : ''}`;
+    const put = (sha) => ghFetch(ghUrl(), { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, content: utf8ToB64(body), ...(sha ? { sha } : {}) }) });
+    let r = await put(gh.sha);
+    // sha устарел (файл меняли с другого устройства или вручную) — берём актуальный и пишем поверх; прошлая версия остаётся в истории git.
+    if (r.status === 409 || r.status === 422) r = await put(await ghRemoteSha());
+    if (!r.ok) throw new Error(r.status === 404 ? 'Репозиторий не найден (404): проверьте имя и доступ токена' : `GitHub ответил ${r.status}`);
+    gh.sha = (await r.json()).content.sha;
+    Object.assign(gh, { pushedHash: hash, dirty: hashStr(backupJson()) !== hash, lastOk: new Date().toISOString(), lastError: '' });
+    saveGh();
+    if (gh.dirty) ghSchedule();
+    return true;
+  } catch (e) {
+    gh.lastError = e.message === 'Failed to fetch' ? 'Нет связи с GitHub — отправлю при следующем сохранении или открытии' : e.message;
+    saveGh();
+    return false;
+  } finally {
+    ghBusy = false;
+    if (ui.tab === 'settings') render();
+  }
+}
+function ghStatusHtml() {
+  if (!ghOn()) return '<span class="muted">Не подключено</span>';
+  const t = gh.lastOk ? new Date(gh.lastOk) : null;
+  const when = t ? `${t.getDate()} ${MONTHS[t.getMonth()]}, ${pad(t.getHours())}:${pad(t.getMinutes())}` : '';
+  if (gh.lastError) return `<span style="color:var(--bad)">⚠ ${esc(gh.lastError)}</span>${when ? `<br><span class="muted">Последний успешный бэкап: ${when}</span>` : ''}`;
+  if (gh.dirty) return '<span class="muted">Отправляю…</span>';
+  return when ? `<span style="color:var(--good)">✓ Бэкап актуален</span> <span class="muted">· ${when}</span>` : '<span class="muted">Ещё не отправлялся</span>';
+}
+// Подключение: проверяем доступ; если в репозитории уже есть бэкап (другое устройство), предлагаем восстановить из него, а не затирать.
+async function ghConnect() {
+  const repo = $('#ghRepo').value.trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '').replace(/\/+$/, '');
+  const token = $('#ghToken').value.trim() || gh.token;
+  const path = $('#ghPath').value.trim().replace(/^\/+/, '') || GH_DEFAULT_PATH;
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) { toast('Репозиторий в виде владелец/имя, например IgorTsalko/workout-backup'); return; }
+  if (!token) { toast('Вставьте токен'); return; }
+  Object.assign(gh, { repo, token, path, sha: '', pushedHash: '', lastError: '' });
+  try {
+    const r = await ghFetch(`https://api.github.com/repos/${repo}`);
+    if (r.status === 404) throw new Error('Репозиторий не найден (404): проверьте имя и что токен выдан на этот репозиторий');
+    if (!r.ok) throw new Error(`GitHub ответил ${r.status}`);
+    const remote = await ghReadRemote();
+    gh.sha = remote ? await ghRemoteSha() : '';
+    saveGh();
+    if (remote && Array.isArray(remote.history) && hashStr(JSON.stringify(remote, null, 2)) !== hashStr(backupJson())) {
+      if (confirm(`В репозитории уже есть бэкап: ${remote.history.length} записей, ${remote.plans?.length ?? 0} планов (здесь: ${state.history.length} и ${state.plans.length}).\n\n«ОК» — взять данные из GitHub.\n«Отмена» — оставить данные этого браузера и записать их в GitHub (прошлая версия останется в истории репозитория).`)) {
+        ghApplyRemote(remote); return;
+      }
+    }
+    await ghPush(true);
+    toast(gh.lastError ? gh.lastError : 'GitHub подключён, бэкап отправлен');
+  } catch (e) {
+    gh.lastError = e.message === 'Failed to fetch' ? 'Нет связи с GitHub' : e.message; saveGh(); toast(gh.lastError);
+  }
+  render();
+}
+function ghApplyRemote(remote) {
+  delete remote.profile;
+  state = { ...emptyState(), ...remote };
+  safeSet(STORE_KEY, JSON.stringify(state)); safeDel(UNDO_KEY);
+  Object.assign(gh, { pushedHash: hashStr(backupJson()), dirty: false, lastOk: new Date().toISOString(), lastError: '' }); saveGh();
+  toast(`Восстановлено из GitHub: ${state.history.length} записей`); render();
+}
+async function ghRestore() {
+  try {
+    const remote = await ghReadRemote();
+    if (!remote || !Array.isArray(remote.history) || !Array.isArray(remote.plans)) { toast('В репозитории нет бэкапа этого приложения'); return; }
+    if (!confirm(`Восстановить из GitHub ${remote.history.length} записей и ${remote.plans.length} планов? Текущие данные будут заменены.`)) return;
+    gh.sha = await ghRemoteSha();
+    ghApplyRemote(remote);
+  } catch (e) { toast(e.message === 'Failed to fetch' ? 'Нет связи с GitHub' : e.message); }
 }
 
 /* =====================================================================
@@ -1617,6 +1744,24 @@ function viewSettings() {
     <p class="small muted">Записей: ${state.history.length} · планов: ${state.plans.length}</p>
   </div>
   <div class="card">
+    <h3>Автобэкап в GitHub</h3>
+    <p class="small" style="margin-top:0">После каждого сохранения (тренировка, ответ тренера, правка, откат) данные сами коммитятся в файл <code>${esc(gh.path)}</code> вашего репозитория. Каждая версия остаётся в истории git.</p>
+    <p class="small">${ghStatusHtml()}</p>
+    ${ghOn() ? `<p class="small muted">Репозиторий: <a href="https://github.com/${esc(gh.repo)}/commits/HEAD/${esc(gh.path)}" target="_blank" rel="noopener">${esc(gh.repo)}</a></p>
+    <div class="row">
+      <button class="btn primary" data-act="gh-push">Отправить сейчас</button>
+      <button class="btn" data-act="gh-restore">Восстановить из GitHub</button>
+      <button class="btn danger" data-act="gh-off">Отключить</button>
+    </div>` : `<details class="small"><summary>Как подключить (один раз)</summary><ol style="padding-left:18px">
+      <li>Создайте <b>приватный</b> репозиторий на GitHub, например <code>workout-backup</code>.</li>
+      <li>Создайте токен: GitHub → Settings → Developer settings → Fine-grained tokens → Generate new token. Repository access: <b>Only select repositories</b> → этот репозиторий. Permissions → Repository → <b>Contents: Read and write</b>.</li>
+      <li>Вставьте имя репозитория и токен ниже. Токен хранится только в этом браузере и в бэкап не попадает.</li></ol></details>
+    <label class="f">Репозиторий (владелец/имя)<input id="ghRepo" value="${esc(gh.repo)}" placeholder="IgorTsalko/workout-backup" autocomplete="off"></label>
+    <label class="f">Токен<input id="ghToken" type="password" placeholder="github_pat_…" autocomplete="off"></label>
+    <label class="f">Файл в репозитории<input id="ghPath" value="${esc(gh.path)}"></label>
+    <div class="row" style="margin-top:8px"><button class="btn primary" data-act="gh-connect">Подключить</button></div>`}
+  </div>
+  <div class="card">
     <h3>Сброс</h3>
     <div class="row">
       <button class="btn" data-act="load-seed">Загрузить стартовые данные</button>
@@ -2043,6 +2188,14 @@ document.addEventListener('click', async (e) => {
     }
     case 'export-json': download(`workout-backup-${todayIso()}.json`, JSON.stringify(state, null, 2), 'application/json'); break;
     case 'import-json': $('#fileInput').click(); break;
+    case 'gh-connect': b.disabled = true; await ghConnect(); break;
+    case 'gh-push': b.disabled = true; toast(await ghPush(true) ? 'Бэкап отправлен в GitHub' : gh.lastError); break;
+    case 'gh-restore': await ghRestore(); break;
+    case 'gh-off':
+      if (confirm('Отключить автобэкап в GitHub? Токен удалится из этого браузера, файл в репозитории останется.')) {
+        gh = { repo: gh.repo, token: '', path: gh.path, sha: '', pushedHash: '', dirty: false, lastOk: '', lastError: '' }; saveGh(); render();
+      }
+      break;
     case 'load-seed':
       if (state.history.length && !confirm('Стартовые данные заменят текущие. Продолжить? (Сначала можно скачать бэкап.)')) break;
       state = { ...buildSeed(), profileEdits: state.profileEdits || {}, profileLog: state.profileLog || [] }; save(); safeDel(UNDO_KEY); draft = null; saveDraft(); toast('Стартовые данные загружены'); setTab('today'); break;
@@ -2095,6 +2248,9 @@ let resizeT; window.addEventListener('resize', () => { clearTimeout(resizeT); re
 // При первом запуске подставляем стартовые данные (текущая программа + первый план).
 if (!state) { state = buildSeed(); save(); } else migrateSeedPlan();
 render();
+// Если прошлый автобэкап не дошёл (не было сети, закрыли вкладку) — досылаем.
+if (ghOn() && gh.dirty) ghPush();
+window.addEventListener('online', () => { if (ghOn() && gh.dirty) ghPush(); });
 </script>
 </body>
 </html>
