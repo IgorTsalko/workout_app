@@ -530,6 +530,10 @@ const warmupLine = (ex) => warmupSets(ex).map(w => {
 }).join(' · ');
 // Отдых между рабочими подходами — только если рабочих подходов больше одного.
 const workRest = (ex) => ex.rest_sec && workSets(ex).length > 1 ? ex.rest_sec : 0;
+// «5 подходов» — число подходов в группе. У рабочих пишем, только когда они разные (3 × 8 + 2 × 6):
+// иначе число и так видно из «3 × 8», а сумма с первого взгляда не читается.
+const setsCount = (n) => `${n} ${plural(n, 'подход', 'подхода', 'подходов')}`;
+const workCount = (ex) => groupSets(workSets(ex)).length > 1 ? workSets(ex).length : 0;
 
 // Плоский список пунктов плана с номерами, как на экране: части суперсетов разворачиваются в «5А», «5Б»,
 // у разминки и заминки stage: true (подходов у них нет).
@@ -549,8 +553,10 @@ function schemeHtml(ex, withRest = true) {
   const [main, ...rest] = groups.length ? groups : [{ n: ex.sets || 1, reps: ex.reps, weight: ex.weight }];
   const warm = warmupLine(ex), wr = withRest ? workRest(ex) : 0;
   const restTag = (sec) => sec ? ` <span class="rest">· отдых ${fmtRest(sec)}</span>` : '';
-  return `${warm ? `<div class="grp"><div class="grp-h">Разминка${restTag(WARMUP_SET_REST)}</div><div class="grp-warm">${esc(warm)}</div></div>` : ''}
-    <div class="grp">${warm || wr ? `<div class="grp-h">Рабочие${restTag(wr)}</div>` : ''}
+  const countTag = (n) => n ? ` · ${setsCount(n)}` : '';
+  const wc = workCount(ex);
+  return `${warm ? `<div class="grp"><div class="grp-h">Разминка${countTag(warmupSets(ex).length)}${restTag(WARMUP_SET_REST)}</div><div class="grp-warm">${esc(warm)}</div></div>` : ''}
+    <div class="grp">${warm || wr || wc ? `<div class="grp-h">Рабочие${countTag(wc)}${restTag(wr)}</div>` : ''}
     <div class="ex-scheme">${esc(main.n)} × ${esc(main.reps ?? '—')} <span class="unit">${unitLabel(ex.unit)}</span>
     <span class="unit">·</span> ${esc(fmtW(main.weight))}</div>
     ${rest.map(g => `<div class="small"><b>+ ${g.n} × ${esc(g.reps)}</b> · ${esc(fmtW(g.weight))}</div>`).join('')}</div>`;
@@ -1749,9 +1755,9 @@ function planAsText(plan) {
     if (!isSuperset(ex)) {
       // Чекбокс на каждый подход, одинаковые подряд подходы — в одной строке: «☐☐☐ 77.5 кг × 6».
       const boxes = (g) => `${'☐'.repeat(g.n)} ${loadText(ex, g)}`;
-      if (warmupSets(ex).length) L.push(`   Разминка (отдых ${fmtRest(WARMUP_SET_REST)}): ${groupSets(warmupSets(ex)).map(boxes).join(', ')}`);
-      const wr = workRest(ex);
-      L.push(`   ${warmupSets(ex).length || wr ? `Рабочие${wr ? ` (отдых ${fmtRest(wr)})` : ''}: ` : ''}${groupSets(workSets(ex)).map(boxes).join(', ')}`);
+      if (warmupSets(ex).length) L.push(`   Разминка (${setsCount(warmupSets(ex).length)}, отдых ${fmtRest(WARMUP_SET_REST)}): ${groupSets(warmupSets(ex)).map(boxes).join(', ')}`);
+      const wr = workRest(ex), wc = workCount(ex), meta = [wc ? setsCount(wc) : '', wr ? `отдых ${fmtRest(wr)}` : ''].filter(Boolean).join(', ');
+      L.push(`   ${warmupSets(ex).length || meta ? `Рабочие${meta ? ` (${meta})` : ''}: ` : ''}${groupSets(workSets(ex)).map(boxes).join(', ')}`);
     }
     if (ex.notes) L.push(`   ${ex.notes}`);
     if (restAfter(it)) L.push(`   ⏸ Отдых ${fmtRest(restAfter(it))}`);
@@ -1849,8 +1855,9 @@ function planImageBlob(plan) {
           }
           P.y += 32;
         };
-        if (warm) { head('РАЗМИНКА', WARMUP_SET_REST); P.T(warm, 25, 500, C.text2, tx, maxW); P.y += 8; }
-        if (warm || wr) head('РАБОЧИЕ', wr);
+        const wc = workCount(e), cnt = (n) => n ? ` · ${setsCount(n).toUpperCase()}` : '';
+        if (warm) { head('РАЗМИНКА' + cnt(warmupSets(e).length), WARMUP_SET_REST); P.T(warm, 25, 500, C.text2, tx, maxW); P.y += 8; }
+        if (warm || wr || wc) head('РАБОЧИЕ' + cnt(wc), wr);
         groupSets(workSets(e)).forEach((g, gi) => {
           const big = gi === 0;
           const main = `${big ? '' : '+ '}${g.n} × ${g.reps}`, unit = ` ${unitLabel(e.unit)} · `, wt = fmtW(g.weight);
