@@ -2147,11 +2147,27 @@ function planImageBlob(plan) {
         }
         P.y += 48;
       };
-      // Строка «Прошлый раз» под схемой подходов.
-      P.last = (name, tx, maxW) => {
+      // Плашка «Прошлый раз» под схемой подходов, как на экране: заголовок, подходы и заметка.
+      P.last = (name, tx, maxW, bg = '#efefec') => {
         const last = lastTime(name, plan);
         if (!last) return;
-        P.y += 6; P.T(`↩ Прошлый раз, ${shortDate(last.date)}: ${lastLine(last)}`, 22, 500, C.text2, tx, maxW, 1.35); P.y += 4;
+        const pad = 16, iw = maxW - pad * 2, head = `↩ ПРОШЛЫЙ РАЗ, ${shortDate(last.date).toUpperCase()}`, body = lastLine(last), note = last.ex.notes || '';
+        const noteAll = note ? wrap(note, 21, 400, iw) : [], noteLines = noteAll.slice(0, 2), more = noteAll.length > 2;
+        const h = pad * 2 + 19 * 1.35 + 6 + wrap(body, 24, 600, iw).length * 24 * 1.35 + (noteLines.length ? 6 + noteLines.length * 21 * 1.35 : 0);
+        P.y += 12;
+        const y0 = P.y;
+        if (d) roundRect(tx, y0, maxW, h, 12, bg);
+        P.y += pad;
+        P.T(head, 19, 700, C.muted, tx + pad, iw); P.y += 6;
+        P.T(body, 24, 600, C.text, tx + pad, iw);
+        if (noteLines.length) {
+          P.y += 6;
+          // Заметка — не больше двух строк, как на экране.
+          if (d) { ctx.font = font(21, 400); ctx.fillStyle = C.text2; ctx.textBaseline = 'top'; }
+          noteLines.forEach((l, k) => { if (d) ctx.fillText(more && k === noteLines.length - 1 ? `${l}…` : l, tx + pad, P.y + k * 21 * 1.35); });
+          P.y += noteLines.length * 21 * 1.35;
+        }
+        P.y = y0 + h + 4;
       };
       P.meta = (str, tx) => {
         if (!str) return;
@@ -2196,7 +2212,7 @@ function planImageBlob(plan) {
             const pbw = Q.badge(part.change, x + w - 18);
             Q.T(part.name, 29, 700, C.text, px, pw - pbw - 10, 1.25); Q.y += 6;
             Q.scheme({ ...part, sets: ex.sets }, px, pw, false);
-            Q.last(part.name, px, pw);
+            Q.last(part.name, px, pw, C.card);
             Q.meta(part.rpe ? `RPE ${fmtRpe(part.rpe)}` : '', px);
             if (part.notes) { Q.y += 4; Q.T(part.notes, 23, 400, C.text2, px, pw, 1.4); }
             return Q.y + 18;
