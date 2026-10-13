@@ -353,7 +353,9 @@ function undoImport() {
   const u = getUndo();
   if (!u) return;
   if (!confirm('Вернуть данные к состоянию до последней загрузки ответа тренера? Запись о тренировке, новый план и правки «Обо мне» из этого ответа удалятся, описание тренировки вернётся в поле. Изменения, сделанные после загрузки, тоже пропадут.')) return;
+  const inbox = state.coachInbox; // ответ из GitHub после отката не загружаем повторно
   try { state = { ...emptyState(), ...JSON.parse(u.state) }; } catch (e) { toast('Не удалось откатить: снимок повреждён'); return; }
+  if (inbox) state.coachInbox = inbox;
   save();
   ui.report = u.report || ''; ui.lastImport = ''; saveUi();
   safeDel(UNDO_KEY);
@@ -364,14 +366,19 @@ function undoImport() {
 /* =====================================================================
    Автобэкап в GitHub: после каждого сохранения данных (тренировка, ответ тренера, правка, откат)
    приложение коммитит JSON-снимок в один файл репозитория через GitHub API. История версий — это git log файла.
+   Рядом приложение кладёт промпт тренера (coach-prompt.md) для отдельного проекта Claude, а при открытии забирает
+   изменения: данные с другого устройства и ответ тренера (coach-answer.json), который тот коммитит сам.
    ===================================================================== */
 const GH_DEFAULT_PATH = 'workout-backup.json';
+const GH_PROMPT_PATH = 'coach-prompt.md';   // пишет приложение, читает тренер в проекте Claude
+const GH_INBOX_PATH = 'coach-answer.json';  // пишет тренер, читает приложение
 const GH_DELAY_MS = 3000;  // несколько сохранений подряд уходят одним коммитом
-let gh = { repo: '', token: '', path: GH_DEFAULT_PATH, sha: '', pushedHash: '', dirty: false, lastOk: '', lastError: '' };
+const GH_RESYNC_MS = 60000; // при возврате на вкладку проверяем репозиторий не чаще раза в минуту
+let gh = { repo: '', token: '', path: GH_DEFAULT_PATH, sha: '', pushedHash: '', promptSha: '', promptHash: '', inboxFailed: '', dirty: false, lastOk: '', lastError: '' };
 try { Object.assign(gh, JSON.parse(safeGet(GH_KEY) || '{}')); } catch (e) {}
 function saveGh() { safeSet(GH_KEY, JSON.stringify(gh)); }
 const ghOn = () => !!(gh.repo && gh.token);
-let ghTimer = null, ghBusy = false;
+let ghTimer = null, ghBusy = false, ghSyncedAt = 0;
 
 function hashStr(str) { let h = 5381; for (let i = 0; i < str.length; i++) h = (h * 33 ^ str.charCodeAt(i)) >>> 0; return `${str.length}:${h}`; }
 function utf8ToB64(str) {
@@ -379,8 +386,10 @@ function utf8ToB64(str) {
   for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
   return btoa(bin);
 }
+function b64ToUtf8(b64) { return new TextDecoder().decode(Uint8Array.from(atob(b64.replace(/\s/g, '')), c => c.charCodeAt(0))); }
 function backupJson() { return JSON.stringify(state, null, 2); }
-function ghUrl() { return `https://api.github.com/repos/${gh.repo}/contents/${gh.path.split('/').map(encodeURIComponent).join('/')}`; }
+const coachPromptMd = () => buildPrompt(ui.promptCount, { repo: true });
+function ghUrl(path = gh.path) { return `https://api.github.com/repos/${gh.repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}`; }
 async function ghFetch(url, opts = {}, accept = 'application/vnd.github+json') {
   const r = await fetch(url, { ...opts, cache: 'no-store', headers: { Accept: accept, Authorization: `Bearer ${gh.token}`, 'X-GitHub-Api-Version': '2022-11-28', ...(opts.headers || {}) } });
   if (r.status === 401) throw new Error('GitHub не принял токен (401) — проверьте или создайте заново');
@@ -388,8 +397,8 @@ async function ghFetch(url, opts = {}, accept = 'application/vnd.github+json') {
   return r;
 }
 // Текущий sha файла в репозитории ('' — файла ещё нет).
-async function ghRemoteSha() {
-  const r = await ghFetch(ghUrl());
+async function ghRemoteSha(path = gh.path) {
+  const r = await ghFetch(ghUrl(path));
   if (r.status === 404) return '';
   if (!r.ok) throw new Error(`GitHub ответил ${r.status}`);
   return (await r.json()).sha || '';
@@ -401,6 +410,27 @@ async function ghReadRemote() {
   if (!r.ok) throw new Error(`GitHub ответил ${r.status}`);
   return JSON.parse(await r.text());
 }
+// Файл репозитория целиком: { sha, text } или null, если его нет.
+async function ghGet(path) {
+  const r = await ghFetch(ghUrl(path));
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`GitHub ответил ${r.status}`);
+  const j = await r.json();
+  if (j.encoding === 'base64' && j.content) return { sha: j.sha, text: b64ToUtf8(j.content) };
+  const raw = await ghFetch(ghUrl(path), {}, 'application/vnd.github.raw+json'); // файл больше 1 МБ — без content
+  if (!raw.ok) throw new Error(`GitHub ответил ${raw.status}`);
+  return { sha: j.sha, text: await raw.text() };
+}
+// Коммит одного файла. Возвращает новый sha.
+async function ghPut(path, body, sha, message) {
+  const put = (s) => ghFetch(ghUrl(path), { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, content: utf8ToB64(body), ...(s ? { sha: s } : {}) }) });
+  let r = await put(sha);
+  // sha устарел (файл меняли с другого устройства или вручную) — берём актуальный и пишем поверх; прошлая версия остаётся в истории git.
+  if (r.status === 409 || r.status === 422) r = await put(await ghRemoteSha(path));
+  if (!r.ok) throw new Error(r.status === 404 ? 'Репозиторий не найден (404): проверьте имя и доступ токена' : `GitHub ответил ${r.status}`);
+  return (await r.json()).content.sha;
+}
 function ghSchedule() {
   if (!ghOn()) return;
   gh.dirty = true; saveGh();
@@ -410,20 +440,23 @@ async function ghPush(force = false) {
   if (!ghOn()) return false;
   if (ghBusy) { clearTimeout(ghTimer); ghTimer = setTimeout(ghPush, GH_DELAY_MS); return false; }
   const body = backupJson(), hash = hashStr(body);
-  if (!force && hash === gh.pushedHash) { gh.dirty = false; saveGh(); return true; }
+  const prompt = coachPromptMd(), promptHash = hashStr(prompt);
+  if (!force && hash === gh.pushedHash && promptHash === gh.promptHash) { gh.dirty = false; saveGh(); return true; }
   ghBusy = true;
   try {
-    const last = state.history.map(h => h.date).sort().pop();
-    const message = `Бэкап: ${state.history.length} ${plural(state.history.length, 'запись', 'записи', 'записей')}${last ? `, последняя ${last}` : ''}`;
-    const put = (sha) => ghFetch(ghUrl(), { method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, content: utf8ToB64(body), ...(sha ? { sha } : {}) }) });
-    let r = await put(gh.sha);
-    // sha устарел (файл меняли с другого устройства или вручную) — берём актуальный и пишем поверх; прошлая версия остаётся в истории git.
-    if (r.status === 409 || r.status === 422) r = await put(await ghRemoteSha());
-    if (!r.ok) throw new Error(r.status === 404 ? 'Репозиторий не найден (404): проверьте имя и доступ токена' : `GitHub ответил ${r.status}`);
-    gh.sha = (await r.json()).content.sha;
-    Object.assign(gh, { pushedHash: hash, dirty: hashStr(backupJson()) !== hash, lastOk: new Date().toISOString(), lastError: '' });
-    saveGh();
+    if (force || hash !== gh.pushedHash) {
+      const last = state.history.map(h => h.date).sort().pop();
+      const message = `Бэкап: ${state.history.length} ${plural(state.history.length, 'запись', 'записи', 'записей')}${last ? `, последняя ${last}` : ''}`;
+      gh.sha = await ghPut(gh.path, body, gh.sha, message);
+      Object.assign(gh, { pushedHash: hash, dirty: hashStr(backupJson()) !== hash, lastOk: new Date().toISOString(), lastError: '' });
+      saveGh();
+    }
+    if (promptHash !== gh.promptHash) {
+      const plan = currentPlan();
+      gh.promptSha = await ghPut(GH_PROMPT_PATH, prompt, gh.promptSha, `Промпт тренера${plan ? `: последний план «${plan.title || 'План'}» на ${plan.date}` : ''}`);
+      Object.assign(gh, { promptHash, lastOk: new Date().toISOString(), lastError: '' });
+      saveGh();
+    }
     if (gh.dirty) ghSchedule();
     return true;
   } catch (e) {
@@ -435,10 +468,10 @@ async function ghPush(force = false) {
     if (ui.tab === 'settings') render();
   }
 }
+const fmtStamp = (iso) => { const t = new Date(iso); return `${t.getDate()} ${MONTHS[t.getMonth()]}, ${pad(t.getHours())}:${pad(t.getMinutes())}`; };
 function ghStatusHtml() {
   if (!ghOn()) return '<span class="muted">Не подключено</span>';
-  const t = gh.lastOk ? new Date(gh.lastOk) : null;
-  const when = t ? `${t.getDate()} ${MONTHS[t.getMonth()]}, ${pad(t.getHours())}:${pad(t.getMinutes())}` : '';
+  const when = gh.lastOk ? fmtStamp(gh.lastOk) : '';
   if (gh.lastError) return `<span style="color:var(--bad)">⚠ ${esc(gh.lastError)}</span>${when ? `<br><span class="muted">Последний успешный бэкап: ${when}</span>` : ''}`;
   if (gh.dirty) return '<span class="muted">Отправляю…</span>';
   return when ? `<span style="color:var(--good)">✓ Бэкап актуален</span> <span class="muted">· ${when}</span>` : '<span class="muted">Ещё не отправлялся</span>';
@@ -450,7 +483,7 @@ async function ghConnect() {
   const path = $('#ghPath').value.trim().replace(/^\/+/, '') || GH_DEFAULT_PATH;
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) { toast('Репозиторий в виде владелец/имя, например IgorTsalko/workout-backup'); return; }
   if (!token) { toast('Вставьте токен'); return; }
-  Object.assign(gh, { repo, token, path, sha: '', pushedHash: '', lastError: '' });
+  Object.assign(gh, { repo, token, path, sha: '', pushedHash: '', promptSha: '', promptHash: '', inboxFailed: '', lastError: '' });
   try {
     const r = await ghFetch(`https://api.github.com/repos/${repo}`);
     if (r.status === 404) throw new Error('Репозиторий не найден (404): проверьте имя и что токен выдан на этот репозиторий');
@@ -476,6 +509,7 @@ function ghApplyRemote(remote) {
   safeSet(STORE_KEY, JSON.stringify(state)); safeDel(UNDO_KEY);
   Object.assign(gh, { pushedHash: hashStr(backupJson()), dirty: false, lastOk: new Date().toISOString(), lastError: '' }); saveGh();
   toast(`Восстановлено из GitHub: ${state.history.length} записей`); render();
+  ghPush(); // промпт тренера под восстановленные данные
 }
 async function ghRestore() {
   try {
@@ -485,6 +519,40 @@ async function ghRestore() {
     gh.sha = await ghRemoteSha();
     ghApplyRemote(remote);
   } catch (e) { toast(e.message === 'Failed to fetch' ? 'Нет связи с GitHub' : e.message); }
+}
+// При открытии и возврате на вкладку: забираем данные, если их поменяли с другого устройства, и новый ответ тренера
+// из coach-answer.json; затем досылаем своё (несохранённый бэкап, обновлённый промпт тренера).
+async function ghSync() {
+  if (!ghOn() || ghBusy) return;
+  ghBusy = true; ghSyncedAt = Date.now();
+  let msg = '', tab = '';
+  try {
+    const remote = await ghGet(gh.path);
+    if (remote && remote.sha !== gh.sha) {
+      let data = null;
+      try { data = JSON.parse(remote.text); } catch (e) {}
+      if (data && Array.isArray(data.history) && Array.isArray(data.plans)) {
+        delete data.profile;
+        const next = { ...emptyState(), ...data };
+        const same = JSON.stringify(next, null, 2) === backupJson();
+        if (same || !gh.dirty || confirm(`Данные в GitHub изменились с другого устройства (${next.history.length} записей, ${next.plans.length} планов), а здесь есть неотправленные изменения (${state.history.length} и ${state.plans.length}).\n\n«ОК» — взять данные из GitHub.\n«Отмена» — оставить данные этого браузера и записать их в GitHub (прошлая версия останется в истории репозитория).`)) {
+          if (!same) { state = next; safeSet(STORE_KEY, JSON.stringify(state)); safeDel(UNDO_KEY); msg = `Данные обновлены из GitHub: ${state.history.length} ${plural(state.history.length, 'запись', 'записи', 'записей')}`; }
+          Object.assign(gh, { sha: remote.sha, pushedHash: hashStr(backupJson()), dirty: false });
+        } else gh.sha = remote.sha; // оставляем своё: следующий бэкап запишется поверх
+      }
+    }
+    const inbox = await ghGet(GH_INBOX_PATH);
+    if (inbox && inbox.sha !== (state.coachInbox || {}).sha && inbox.sha !== gh.inboxFailed) {
+      try { ({ msg, tab } = applyInbox(inbox)); gh.inboxFailed = ''; }
+      catch (e) { gh.inboxFailed = inbox.sha; msg = `Ответ тренера из GitHub не загружен: ${e.message}`; }
+    }
+    Object.assign(gh, { lastOk: new Date().toISOString(), lastError: '' }); saveGh();
+  } catch (e) {
+    gh.lastError = e.message === 'Failed to fetch' ? 'Нет связи с GitHub — проверю при следующем открытии' : e.message; saveGh();
+  } finally { ghBusy = false; }
+  if (msg) toast(msg);
+  if (tab) setTab(tab); else if (msg || ui.tab === 'settings') render();
+  ghPush();
 }
 
 /* =====================================================================
@@ -1279,7 +1347,9 @@ function planLine(ex) {
   return parts.join(', ');
 }
 
-function buildPrompt(count) {
+// repo: версия для отдельного проекта Claude (файл coach-prompt.md в репозитории бэкапа): мой текст о тренировке
+// приходит в чат, а финальный JSON тренер сам коммитит в coach-answer.json.
+function buildPrompt(count, { repo = false } = {}) {
   const P = profile();
   const today = todayIso();
   const hist = sortedHistory();
@@ -1287,12 +1357,14 @@ function buildPrompt(count) {
   const older = hist.slice(count);
   const plan = currentPlan();
   const bw = latestBodyweight();
-  const report = (ui.report || '').trim();
+  const reportText = repo ? '' : (ui.report || '').trim();
+  const report = repo || !!reportText;
   const L = [];
   L.push(`# Тренер`);
   L.push(`Ты — мой персональный тренер по силовым тренировкам: опытный, требовательный, со своим мнением. Ты отвечаешь за мой результат, а не за то, чтобы я был доволен ответом. Ниже — мои данные, последний план, мой отчёт о прошедшей тренировке и история. Сначала мы обсуждаем следующую тренировку в этом чате, а итоговый JSON для приложения ты выдаёшь только по моей команде.`);
   L.push(`Главное: смотри на тренировку и неделю целиком. План собирается по шагам «Как подбирать план» — от недели к цифрам, — а не правкой прошлого плана. Обсуждение одного упражнения или одной проблемы не отменяет остальные мышечные группы: после любой правки план снова проходит проверку целиком.`);
-  L.push(`Сегодня: ${today} (${WEEKDAYS[parseIso(today).getDay()]}).`);
+  if (repo) L.push(`Этот текст собрало приложение-дневник ${today}. Сегодняшнюю дату узнай сам: если с тех пор прошли дни, считай «дни с последней записи» и дату следующей тренировки от неё.`);
+  else L.push(`Сегодня: ${today} (${WEEKDAYS[parseIso(today).getDay()]}).`);
   L.push('');
   L.push(`## Как мы работаем`);
   L.push(`**Этап 1 — твой первый ответ: разбор и предложение. Без JSON.** По порядку:`);
@@ -1311,6 +1383,7 @@ function buildPrompt(count) {
   L.push(`- Обещал компенсацию или перенос («добавлю подход в тягу») — выполни или прямо отзови в том же ответе.`);
   L.push(`- JSON на этом этапе не выдавай, даже частично и даже «для примера».`);
   L.push(`**Этап 3 — финал.** Только когда я явно скажу «финал», «давай JSON», «формируй JSON» или так же однозначно попрошу итог для приложения, — ещё раз пройди проверку (шаг 7), затем выдай одну строку текста и один блок \`\`\`json по формату ниже, ровно с тем планом, о котором мы договорились. Если какой-то вопрос так и остался открытым, реши его сам и напиши об этом в warnings.`);
+  if (repo) L.push(`Финал через репозиторий: тот же JSON (только JSON, без текста вокруг) запиши в файл \`${GH_INBOX_PATH}\` в корне репозитория${gh.repo ? ` ${gh.repo}` : ''} и закоммить прямо в основную ветку, без веток и pull request. Остальные файлы репозитория не меняй: их пишет приложение. Приложение подхватит ответ, когда я его открою: проверит план, запишет тренировку в историю и покажет план на «Сегодня». Если после финала я попрошу исправить план, перезапиши файл целиком и добавь в JSON поле "correction": true — тогда приложение заменит прошлый ответ из этого чата, а не добавит второй.`);
   L.push('');
   L.push(`## Каким тренером быть`);
   L.push(`- Не соглашайся, чтобы сделать мне приятно. Меняй решение только при новом аргументе или факте: боль, занятый или отсутствующий тренажёр, цифры из истории, ошибка в твоём расчёте. Если аргумента нет — держи позицию и коротко объясни почему: механика движения, нагрузка на мышцу, цифры.`);
@@ -1372,11 +1445,15 @@ function buildPrompt(count) {
   }
 
   // Описание прошедшей тренировки свободным текстом — Claude разбирает его в completed_workout.
-  if (report) {
+  if (repo) {
+    L.push(`## Как прошла тренировка`);
+    L.push(`Мой текст о прошедшей тренировке я пришлю в чате — это и есть «мой текст „Как прошла тренировка“» во всех правилах здесь. Пишу свободно. Номера упражнений — из последнего выданного плана выше (1 — разминка, дальше 2, 3…, части суперсета 5А, 5Б, последний номер — заминка). Там же мои пожелания к следующей тренировке, то, на чём я настаиваю, и вопросы к тебе по тренировке и упражнениям.`);
+    L.push('');
+  } else if (report) {
     L.push(`## Как прошла тренировка (мой текст, как есть)`);
     L.push(`Пишу свободно. Номера упражнений — из последнего выданного плана выше (1 — разминка, дальше 2, 3…, части суперсета 5А, 5Б, последний номер — заминка). Здесь же мои пожелания к следующей тренировке, то, на чём я настаиваю, и вопросы к тебе по тренировке и упражнениям.`);
     L.push('"""');
-    L.push(report);
+    L.push(reportText);
     L.push('"""');
     L.push('');
   }
@@ -1540,6 +1617,7 @@ function viewClaude() {
   const plan = currentPlan();
   const flat = plan ? flatExercises(plan) : [];
   return `<h2>Тренер</h2>
+  ${ghOn() ? `<div class="card"><p class="small" style="margin:0"><b>Через проект Claude:</b> тренер читает промпт из <code>${GH_PROMPT_PATH}</code> в репозитории <a href="https://github.com/${esc(gh.repo)}" target="_blank" rel="noopener">${esc(gh.repo)}</a>, вы пишете ему, как прошла тренировка, а после «финал» он сам кладёт ответ в <code>${GH_INBOX_PATH}</code>. Приложение загрузит его при открытии или обновлении страницы, шаги ниже не нужны.${state.coachInbox ? ` Последний такой ответ: ${fmtStamp(state.coachInbox.at)}.` : ''}</p></div>` : ''}
   <div class="card">
     <h3>Шаг 1. Описать тренировку и скопировать промпт тренера</h3>
     <label class="f">Как прошла тренировка (необязательно)
@@ -1740,6 +1818,51 @@ function planIssues(plan) {
   if (mins > P.sessionMinutes + TIME_SLACK_MIN) issues.push(`По расчёту приложения план идёт ~${mins} мин: это больше ориентира ${P.sessionMinutes} мин + ${TIME_SLACK_MIN}.`);
   return issues;
 }
+// Что в ответе тренера: запись о тренировке, новый план, правки «Обо мне», пожелания без тренировки, замечания проверки.
+function parseCoachAnswer(o) {
+  // Сначала тренировка: её номера относятся к плану, который был текущим до этого ответа.
+  const c = o.completed_workout || o.completedWorkout;
+  const entry = c ? normalizeLog(c, currentPlan()) : null;
+  const upd = o.profile_update || o.profileUpdate || null;
+  const plan = o.next_workout || o.nextWorkout || o.workout || o.exercises || (!entry && !upd) ? normalizePlan(o) : null;
+  const request = !entry && o.request && o.request.text ? { text: String(o.request.text).trim(), insist: !!o.request.insist } : null;
+  return { entry, upd, plan, request, issues: plan ? planIssues(plan) : [] };
+}
+// Применяет разобранный ответ. inbox — sha файла coach-answer.json, если ответ пришёл из GitHub.
+// Возвращает текст для уведомления и вкладку, на которую перейти.
+function applyCoachAnswer({ entry, upd, plan, request, issues }, inbox = '') {
+  if (issues.length) plan.warnings = [...plan.warnings, ...issues.map(x => `Проверка приложения: ${x}`)];
+  const undo = { at: new Date().toISOString(), state: JSON.stringify(state), report: ui.report || '',
+    what: [entry && 'тренировка', plan && 'план', upd && 'данные «Обо мне»'].filter(Boolean).join(', ') + (inbox ? ' (из GitHub)' : '') };
+  if (entry || plan) ui.report = '';
+  if (entry) state.history.push(entry);
+  saveUi();
+  safeSet(UNDO_KEY, JSON.stringify(undo));
+  const changes = applyProfileUpdate(upd, 'coach');
+  if (inbox) {
+    // Метка источника: по ней исправленный ответ из того же чата («correction») заменяет этот.
+    if (entry) entry.inbox = inbox;
+    if (plan) plan.inbox = inbox;
+    if (changes.length) state.profileLog.slice(-changes.length).forEach(x => { x.inbox = inbox; });
+    state.coachInbox = { sha: inbox, at: new Date().toISOString(), changes: changes.map(({ field, from, to }) => ({ field, from, to })) };
+  }
+  const updMsg = changes.length ? `, данные «Обо мне» обновлены (${changes.length})` : '';
+  if (!plan) {
+    save();
+    return { msg: (entry ? 'Тренировка записана в историю' : changes.length ? 'Данные «Обо мне» обновлены' : 'Тренер ничего не изменил') + (entry ? updMsg : ''),
+      tab: entry ? 'history' : 'settings' };
+  }
+  if (changes.length) plan.profile_changes = changes;
+  // Пожелания без описания тренировки Claude возвращает отдельно в request.
+  if (request) {
+    plan.request = request;
+    state.requests = [...(state.requests || []), { date: todayIso(), ...request, ...(inbox ? { inbox } : {}) }];
+  }
+  state.plans.push(plan); save();
+  if (draft && !draft.id) { draft = null; saveDraft(); }
+  return { msg: (entry ? 'Тренировка записана, новый план загружен' : 'План загружен') + updMsg,
+    tab: entry && entry.assumptions.length ? 'history' : 'today' };
+}
 function importPlan() {
   const text = $('#importText').value.trim();
   const msg = $('#importMsg');
@@ -1747,47 +1870,57 @@ function importPlan() {
   const o = extractJson(text);
   if (!o) { msg.textContent = 'Не нашёл корректный JSON в тексте. Попросите Claude вернуть блок ```json.'; return; }
   try {
-    // Сначала тренировка: её номера относятся к плану, который был текущим до этого ответа.
-    const c = o.completed_workout || o.completedWorkout;
-    const entry = c ? normalizeLog(c, currentPlan()) : null;
-    const upd = o.profile_update || o.profileUpdate || null;
-    const plan = o.next_workout || o.nextWorkout || o.workout || o.exercises || (!entry && !upd) ? normalizePlan(o) : null;
+    const a = parseCoachAnswer(o);
     if (ui.lastImport === text && !confirm('Этот ответ уже загружен. Загрузить ещё раз? (Запись и план продублируются.)')) return;
-    const issues = plan ? planIssues(plan) : [];
-    if (issues.length && !confirm(`В плане тренера есть ошибки:\n\n${issues.map(x => `• ${x}`).join('\n')}\n\nЛучше вернуть план тренеру: «Отмена» — скопировать замечания, чтобы вставить их в чат. «ОК» — загрузить как есть.`)) {
-      const back = `В плане есть ошибки, исправь и пришли финальный JSON заново:\n${issues.map(x => `- ${x}`).join('\n')}`;
+    if (a.issues.length && !confirm(`В плане тренера есть ошибки:\n\n${a.issues.map(x => `• ${x}`).join('\n')}\n\nЛучше вернуть план тренеру: «Отмена» — скопировать замечания, чтобы вставить их в чат. «ОК» — загрузить как есть.`)) {
+      const back = `В плане есть ошибки, исправь и пришли финальный JSON заново:\n${a.issues.map(x => `- ${x}`).join('\n')}`;
       copyText(back).then(ok => toast(ok ? 'Замечания скопированы — вставьте их в чат с тренером' : 'Не удалось скопировать'));
       msg.textContent = back;
       return;
     }
-    if (issues.length) plan.warnings = [...plan.warnings, ...issues.map(x => `Проверка приложения: ${x}`)];
-    const undo = { at: new Date().toISOString(), state: JSON.stringify(state), report: ui.report || '',
-      what: [entry && 'тренировка', plan && 'план', upd && 'данные «Обо мне»'].filter(Boolean).join(', ') };
     ui.lastImport = text;
-    if (entry || plan) ui.report = '';
-    if (entry) state.history.push(entry);
-    saveUi();
-    safeSet(UNDO_KEY, JSON.stringify(undo));
-    const changes = applyProfileUpdate(upd, 'coach');
-    const updMsg = changes.length ? `, данные «Обо мне» обновлены (${changes.length})` : '';
-    if (!plan) {
-      save();
-      toast((entry ? 'Тренировка записана в историю' : changes.length ? 'Данные «Обо мне» обновлены' : 'Тренер ничего не изменил') + (entry ? updMsg : ''));
-      setTab(entry ? 'history' : 'settings');
-      return;
-    }
-    if (changes.length) plan.profile_changes = changes;
-    // Пожелания без описания тренировки Claude возвращает отдельно в request.
-    const req = !entry && o.request && o.request.text ? String(o.request.text).trim() : '';
-    if (req) {
-      plan.request = { text: req, insist: !!o.request.insist };
-      state.requests = [...(state.requests || []), { date: todayIso(), text: req, insist: !!o.request.insist }];
-    }
-    state.plans.push(plan); save();
-    if (draft && !draft.id) { draft = null; saveDraft(); }
-    toast((entry ? 'Тренировка записана, новый план загружен' : 'План загружен') + updMsg);
-    setTab(entry && entry.assumptions.length ? 'history' : 'today');
+    const r = applyCoachAnswer(a);
+    toast(r.msg);
+    setTab(r.tab);
   } catch (e) { msg.textContent = e.message; }
+}
+
+/* =====================================================================
+   Ответ тренера из отдельного проекта Claude: тренер коммитит финальный JSON в coach-answer.json
+   репозитория бэкапа, приложение при открытии загружает его так же, как вставленный на шаге 3.
+   ===================================================================== */
+// Убирает из данных всё, что внёс прошлый ответ из GitHub. false — убрать нельзя: по его плану уже есть тренировка.
+function rollbackInbox(prev) {
+  const sha = prev.sha;
+  const plan = state.plans.find(p => p.inbox === sha);
+  if (plan && state.history.some(h => h.planId === plan.id)) return false;
+  state.history = state.history.filter(h => h.inbox !== sha);
+  state.plans = state.plans.filter(p => p.inbox !== sha);
+  state.requests = (state.requests || []).filter(r => r.inbox !== sha);
+  state.profileLog = (state.profileLog || []).filter(x => x.inbox !== sha);
+  const edits = { ...(state.profileEdits || {}) };
+  for (const c of prev.changes || []) {
+    if (profile()[c.field] !== c.to) continue; // поле уже поменяли после этого ответа
+    if (c.from === PROFILE[c.field]) delete edits[c.field]; else edits[c.field] = c.from;
+  }
+  state.profileEdits = edits;
+  return true;
+}
+// Загружает coach-answer.json ({ sha, text }). Ошибки проверки плана не блокируют: они попадут в «⚠ Важно».
+function applyInbox(file) {
+  const o = extractJson(file.text);
+  if (!o) throw new Error(`в ${GH_INBOX_PATH} нет корректного JSON`);
+  const before = JSON.stringify(state);
+  try {
+    const prev = state.coachInbox;
+    let note = '';
+    if (o.correction && prev && prev.sha) note = rollbackInbox(prev) ? ' (исправление заменило прошлый ответ)' : '. Прошлый ответ уже не заменить — проверьте «Историю» на дубли';
+    const r = applyCoachAnswer(parseCoachAnswer(o), file.sha);
+    return { ...r, msg: `Тренер прислал ответ через GitHub: ${r.msg[0].toLowerCase()}${r.msg.slice(1)}${note}` };
+  } catch (e) {
+    state = JSON.parse(before); safeSet(STORE_KEY, before);
+    throw e;
+  }
 }
 
 /* =====================================================================
@@ -1860,8 +1993,10 @@ function viewSettings() {
     <p class="small" style="margin-top:0">После каждого сохранения (тренировка, ответ тренера, правка, откат) данные сами коммитятся в файл <code>${esc(gh.path)}</code> вашего репозитория. Каждая версия остаётся в истории git.</p>
     <p class="small">${ghStatusHtml()}</p>
     ${ghOn() ? `<p class="small muted">Репозиторий: <a href="https://github.com/${esc(gh.repo)}/commits/HEAD/${esc(gh.path)}" target="_blank" rel="noopener">${esc(gh.repo)}</a></p>
+    <p class="small">При открытии приложение забирает из репозитория изменения с другого устройства и ответ тренера из <code>${GH_INBOX_PATH}</code>, а рядом кладёт промпт тренера <code>${GH_PROMPT_PATH}</code> для отдельного проекта Claude.${state.coachInbox ? ` Последний ответ тренера из GitHub загружен ${fmtStamp(state.coachInbox.at)}.` : ''}${gh.inboxFailed ? ` <span style="color:var(--bad)">⚠ Последний <code>${GH_INBOX_PATH}</code> не загружен: в нём ошибка. Попросите тренера записать его заново.</span>` : ''}</p>
     <div class="row">
       <button class="btn primary" data-act="gh-push">Отправить сейчас</button>
+      <button class="btn" data-act="gh-sync">Проверить GitHub</button>
       <button class="btn" data-act="gh-restore">Восстановить из GitHub</button>
       <button class="btn danger" data-act="gh-off">Отключить</button>
     </div>` : `<details class="small"><summary>Как подключить (один раз)</summary><ol style="padding-left:18px">
@@ -2339,9 +2474,10 @@ document.addEventListener('click', async (e) => {
     case 'gh-connect': b.disabled = true; await ghConnect(); break;
     case 'gh-push': b.disabled = true; toast(await ghPush(true) ? 'Бэкап отправлен в GitHub' : gh.lastError); break;
     case 'gh-restore': await ghRestore(); break;
+    case 'gh-sync': b.disabled = true; await ghSync(); if (!gh.lastError) toast('Проверил GitHub'); break;
     case 'gh-off':
       if (confirm('Отключить автобэкап в GitHub? Токен удалится из этого браузера, файл в репозитории останется.')) {
-        gh = { repo: gh.repo, token: '', path: gh.path, sha: '', pushedHash: '', dirty: false, lastOk: '', lastError: '' }; saveGh(); render();
+        gh = { repo: gh.repo, token: '', path: gh.path, sha: '', pushedHash: '', promptSha: '', promptHash: '', inboxFailed: '', dirty: false, lastOk: '', lastError: '' }; saveGh(); render();
       }
       break;
     case 'load-seed':
@@ -2396,9 +2532,10 @@ let resizeT; window.addEventListener('resize', () => { clearTimeout(resizeT); re
 // При первом запуске подставляем стартовые данные (текущая программа + первый план).
 if (!state) { state = buildSeed(); save(); } else migrateSeedPlan();
 render();
-// Если прошлый автобэкап не дошёл (не было сети, закрыли вкладку) — досылаем.
-if (ghOn() && gh.dirty) ghPush();
+// Забираем изменения из GitHub (другое устройство, ответ тренера) и досылаем то, что не ушло (не было сети, закрыли вкладку).
+ghSync();
 window.addEventListener('online', () => { if (ghOn() && gh.dirty) ghPush(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - ghSyncedAt > GH_RESYNC_MS) ghSync(); });
 </script>
 </body>
 </html>
