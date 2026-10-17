@@ -138,6 +138,17 @@ label.f > input, label.f > textarea, label.f > select { margin-top: 4px; }
 .last { font-size: 13px; color: var(--text-2); background: var(--surface-2); border-radius: 8px; padding: 5px 8px; margin: 6px 0 4px; }
 .ss-part .last { background: var(--surface); }
 .last-h { color: var(--muted); font-weight: 600; }
+.last.done { background: var(--good-soft); }
+.plan-switch { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; margin: 0 0 14px; }
+.plan-switch button { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 7px 2px 6px; font: inherit; cursor: pointer;
+  background: var(--surface); color: var(--text-2); border: 1px solid var(--border); border-radius: 10px; }
+.plan-switch .wd { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.plan-switch .dt { font-size: 15px; font-weight: 600; color: var(--text); white-space: nowrap; }
+.plan-switch .st { font-size: 11px; color: var(--muted); }
+.plan-switch .st.good { color: var(--good); }
+.plan-switch .st.next { color: var(--accent); font-weight: 600; }
+.plan-switch button.on { background: var(--accent-soft); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.plan-switch button.on .wd, .plan-switch button.on .dt { color: var(--accent); }
 .last-note { color: var(--muted); margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .grp-warm { font-size: 14px; color: var(--text-2); margin-top: 1px; }
 .rest-after { margin-top: 8px; padding: 6px 10px; border-radius: 8px; background: var(--surface-2); font-size: 13px; color: var(--text-2); }
@@ -252,7 +263,7 @@ table.data th { color: var(--muted); font-weight: 500; }
       <span class="sub" id="brandSub"></span>
     </div>
     <nav class="tabs" id="tabs">
-      <button data-tab="today">Сегодня</button>
+      <button data-tab="today">План</button>
       <button data-tab="history">История</button>
       <button data-tab="progress">Прогресс</button>
       <button data-tab="claude">Тренер</button>
@@ -625,6 +636,27 @@ function toast(msg) {
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 2600);
 }
 const currentPlan = () => state.plans[state.plans.length - 1] || null;
+// Переключатель на главной вкладке: последние RECENT_PLANS планов, включая текущий.
+// Выбор живёт до перезагрузки страницы и сбрасывается, когда приходит новый план.
+const RECENT_PLANS = 4;
+let shown = { id: null, current: null };
+const recentPlans = () => state.plans.slice(-RECENT_PLANS);   // от старых к новым
+function shownPlan() {
+  const cur = currentPlan();
+  if (!cur || shown.current !== cur.id) return cur;
+  return recentPlans().find(p => p.id === shown.id) || cur;
+}
+// Запись в истории, выполненная по плану (последняя, если их несколько).
+const planEntry = (plan) => plan && sortedHistory().find(h => h.planId === plan.id) || null;
+// Дата проведения: по записи в истории, если тренировка уже записана, иначе дата из плана.
+const planIso = (plan) => planEntry(plan)?.date || plan?.date || '';
+// «Пт, 16 окт»
+function planDay(plan) {
+  const iso = planIso(plan);
+  if (!iso) return '';
+  const d = parseIso(iso), wd = WEEKDAYS[d.getDay()];
+  return `${wd[0].toUpperCase()}${wd.slice(1)}, ${d.getDate()} ${MONTHS[d.getMonth()]}`;
+}
 const sortedHistory = () => [...state.history].sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || '').localeCompare(a.createdAt || ''));
 
 async function copyText(text) {
@@ -649,6 +681,7 @@ $('#tabs').addEventListener('click', (e) => { const b = e.target.closest('button
 
 function render() {
   if (ui.tab === 'log' && !(draft && draft.id)) ui.tab = 'claude';
+  $('#tabs button[data-tab="today"]').textContent = planDay(currentPlan()) || 'План';
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === ui.tab));
   const active = $('#tabs button.active'); if (active) active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   const done = state.history.filter(h => h.status === 'done').length;
@@ -660,7 +693,7 @@ function render() {
 }
 
 /* =====================================================================
-   Вкладка «Сегодня»
+   Главная вкладка: план (подписана датой и днём недели текущего плана)
    ===================================================================== */
 // Группирует подряд идущие одинаковые подходы: [{w:75,r:8},{w:75,r:8}] → [{w:75,r:8,n:2}]
 function groupSets(list) {
@@ -788,9 +821,13 @@ function changeBadge(change) {
 
 // «Прошлый раз»: последняя выполненная тренировка (не по этому плану), где было упражнение с тем же названием.
 const sameName = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+// Для прошлого плана — только тренировки до него, чтобы «прошлый раз» был тем же, что и тогда.
 function lastTime(name, plan) {
+  const done = plan && plan !== currentPlan() && planEntry(plan);
+  const before = done ? done.date : plan && plan !== currentPlan() ? plan.date : null;
   for (const h of sortedHistory()) {
     if (h.status !== 'done' || (plan && h.planId === plan.id)) continue;
+    if (before && h.date >= before) continue;
     const ex = (h.exercises || []).find(e => sameName(e.name, name) && (e.sets || []).some(isWork));
     if (ex) return { date: h.date, ex };
   }
@@ -812,9 +849,33 @@ function lastHtml(name, plan) {
   return `<div class="last"><span class="last-h">↩ Прошлый раз, ${esc(shortDate(last.date))}:</span> ${esc(lastLine(last))}
     ${last.ex.notes ? `<div class="last-note">${esc(last.ex.notes)}</div>` : ''}</div>`;
 }
+// «✓ Сделано»: что получилось в этом упражнении по записи о выполненном плане (только у прошлых планов).
+function doneHtml(name, entry) {
+  if (!entry || entry.status !== 'done') return '';
+  const ex = (entry.exercises || []).find(e => sameName(e.name, name));
+  if (!ex) return `<div class="last done"><span class="last-h">✓ Сделано:</span> не записано</div>`;
+  const line = (ex.sets || []).some(isWork) || (ex.sets || []).some(x => x.done === false) ? lastLine({ ex }) : '';
+  return `<div class="last done"><span class="last-h">✓ Сделано:</span> ${esc(line || '—')}
+    ${ex.notes ? `<div class="last-note">${esc(ex.notes)}</div>` : ''}</div>`;
+}
+// Переключатель последних тренировок: до трёх прошлых и текущий план справа, как на календаре.
+function planSwitchHtml(plan) {
+  const list = recentPlans();
+  if (list.length < 2) return '';
+  const cur = currentPlan();
+  return `<div class="plan-switch no-print">${list.map(p => {
+    const iso = planIso(p), d = iso ? parseIso(iso) : null, e = planEntry(p);
+    const st = e ? `<span class="st ${STATUS[e.status].cls}">${STATUS[e.status].glyph} ${e.status === 'done' ? 'сделано' : STATUS[e.status].label.split(' ')[0].toLowerCase()}</span>`
+      : p === cur ? '<span class="st next">следующая</span>' : '<span class="st">нет записи</span>';
+    return `<button data-act="show-plan" data-id="${p.id}" class="${p === plan ? 'on' : ''}">
+      <span class="wd">${d ? WEEKDAYS[d.getDay()] : '—'}</span><span class="dt">${d ? `${d.getDate()} ${MONTHS[d.getMonth()]}` : 'без даты'}</span>${st}</button>`;
+  }).join('')}</div>`;
+}
 
 function viewToday() {
-  const plan = currentPlan();
+  const plan = shownPlan();
+  const past = plan && plan !== currentPlan();
+  const entry = past ? planEntry(plan) : null;
   const last = sortedHistory()[0];
   if (!plan && !state.history.length) {
     return `<div class="card empty">
@@ -827,7 +888,7 @@ function viewToday() {
     </div>`;
   }
   let html = undoHtml();
-  if (last) {
+  if (last && !past) {
     const gap = daysBetween(last.date, todayIso());
     html += `<div class="row small muted no-print" style="margin-bottom:10px">
       Последняя запись: ${fmtDate(last.date)} — <span class="badge ${STATUS[last.status].cls}">${STATUS[last.status].label}</span>
@@ -841,6 +902,7 @@ function viewToday() {
   }
   const used = state.history.some(h => h.planId === plan.id);
   const timeline = planItems(plan);
+  html += planSwitchHtml(plan);
   // Подсвечиваем, если план дольше ориентира больше чем на TIME_SLACK_MIN минут.
   const target = profile().sessionMinutes;
   const overLimit = fmtMin(timeline.total) > target + TIME_SLACK_MIN;
@@ -852,6 +914,14 @@ function viewToday() {
       ${plan.rest_between_exercises_sec ? `<span class="badge">↻ ${esc(Math.round(plan.rest_between_exercises_sec / 60 * 10) / 10)} мин между упражнениями</span>` : ''}
       ${used ? '<span class="badge good">✓ уже записана</span>' : ''}
     </div>`;
+  if (past) {
+    html += entry ? `<div class="callout ${STATUS[entry.status].cls === 'good' ? 'good' : 'warn'}"><h4>${STATUS[entry.status].glyph} ${STATUS[entry.status].label} ${esc(fmtDate(entry.date))}</h4>
+        ${metaLine(entry) ? `<div class="small">${metaLine(entry)}</div>` : ''}
+        ${entry.status !== 'done' && entry.reason ? `<div class="small">${esc(entry.reason)}</div>` : ''}
+        ${entry.notes ? `<div class="small" style="margin-top:4px"><i>${esc(entry.notes)}</i></div>` : ''}
+        <div class="small muted" style="margin-top:4px">Под каждым упражнением — что сделано. Подробная запись — на вкладке «История».</div></div>`
+      : `<div class="callout warn"><h4>Прошлый план</h4><div class="small">Записи о тренировке по этому плану нет.</div></div>`;
+  }
   if (plan.summary || plan.recommendation) {
     html += `<div class="card">
       ${plan.summary ? `<div class="callout good"><h4>Итог прошлой тренировки</h4>${esc(plan.summary)}</div>` : ''}
@@ -906,7 +976,7 @@ function viewToday() {
             <div>
               <div class="row"><span class="ex-name grow">${esc(p.name)}</span>${changeBadge(p.change)}</div>
               ${schemeHtml({ ...p, sets: ex.sets }, false)}
-              ${lastHtml(p.name, plan)}
+              ${past ? doneHtml(p.name, entry) : lastHtml(p.name, plan)}
               ${p.rpe ? `<div class="small muted">Целевое RPE ${fmtRpe(p.rpe)}</div>` : ''}
               ${p.notes ? `<div class="small" style="margin-top:4px">${esc(p.notes)}</div>` : ''}
             </div>
@@ -922,7 +992,7 @@ function viewToday() {
       <div>
         <div class="row"><span class="ex-name grow">${esc(ex.name)}</span>${changeBadge(ex.change)}${time}</div>
         ${schemeHtml(ex)}
-        ${lastHtml(ex.name, plan)}
+        ${past ? doneHtml(ex.name, entry) : lastHtml(ex.name, plan)}
         ${ex.rpe ? `<div class="small muted">Целевое RPE ${fmtRpe(ex.rpe)}</div>` : ''}
         ${ex.notes ? `<div class="small" style="margin-top:6px">${esc(ex.notes)}</div>` : ''}
         ${restHtml}
@@ -931,10 +1001,10 @@ function viewToday() {
   }
   html += `</div>`;
   if (plan.notes) html += `<div class="card soft"><h3>📝 Заметки тренера</h3><div>${esc(plan.notes)}</div></div>`;
-  html += `<div class="row no-print" style="margin-top:6px">
+  if (!past) html += `<div class="row no-print" style="margin-top:6px">
     <button class="btn primary" data-act="goto" data-tab="claude">Описать, как прошла тренировка</button>
-  </div>
-  <div class="card no-print" style="margin-top:16px">
+  </div>`;
+  html += `<div class="card no-print" style="margin-top:16px">
     <h3>📱 Взять план с собой</h3>
     <div class="row">
       <button class="btn" data-act="plan-png">🖼 Картинка (PNG)</button>
@@ -1383,7 +1453,7 @@ function buildPrompt(count, { repo = false } = {}) {
   L.push(`- Обещал компенсацию или перенос («добавлю подход в тягу») — выполни или прямо отзови в том же ответе.`);
   L.push(`- JSON на этом этапе не выдавай, даже частично и даже «для примера».`);
   L.push(`**Этап 3 — финал.** Только когда я явно скажу «финал», «давай JSON», «формируй JSON» или так же однозначно попрошу итог для приложения, — ещё раз пройди проверку (шаг 7), затем выдай одну строку текста и один блок \`\`\`json по формату ниже, ровно с тем планом, о котором мы договорились. Если какой-то вопрос так и остался открытым, реши его сам и напиши об этом в warnings.`);
-  if (repo) L.push(`Финал через репозиторий: тот же JSON (только JSON, без текста вокруг) запиши в файл \`${GH_INBOX_PATH}\` в корне репозитория${gh.repo ? ` ${gh.repo}` : ''} и закоммить прямо в основную ветку, без веток и pull request. Остальные файлы репозитория не меняй: их пишет приложение. Приложение подхватит ответ, когда я его открою: проверит план, запишет тренировку в историю и покажет план на «Сегодня». Если после финала я попрошу исправить план, перезапиши файл целиком и добавь в JSON поле "correction": true — тогда приложение заменит прошлый ответ из этого чата, а не добавит второй.`);
+  if (repo) L.push(`Финал через репозиторий: тот же JSON (только JSON, без текста вокруг) запиши в файл \`${GH_INBOX_PATH}\` в корне репозитория${gh.repo ? ` ${gh.repo}` : ''} и закоммить прямо в основную ветку, без веток и pull request. Остальные файлы репозитория не меняй: их пишет приложение. Приложение подхватит ответ, когда я его открою: проверит план, запишет тренировку в историю и покажет план на главной вкладке. Если после финала я попрошу исправить план, перезапиши файл целиком и добавь в JSON поле "correction": true — тогда приложение заменит прошлый ответ из этого чата, а не добавит второй.`);
   L.push('');
   L.push(`## Каким тренером быть`);
   L.push(`- Не соглашайся, чтобы сделать мне приятно. Меняй решение только при новом аргументе или факте: боль, занятый или отсутствующий тренажёр, цифры из истории, ошибка в твоём расчёте. Если аргумента нет — держи позицию и коротко объясни почему: механика движения, нагрузка на мышцу, цифры.`);
@@ -2116,7 +2186,7 @@ function buildSeed() {
 /* =====================================================================
    Экспорт плана на сегодня: PNG (canvas), печать/PDF, текст
    ===================================================================== */
-const planFileName = (ext) => { const p = currentPlan(); return `workout-${p && p.date ? p.date : todayIso()}.${ext}`; };
+const planFileName = (ext) => { const p = shownPlan(); return `workout-${p && p.date ? p.date : todayIso()}.${ext}`; };
 function canShareFiles() {
   try { return !!(navigator.canShare && navigator.canShare({ files: [new File([''], 'x.png', { type: 'image/png' })] })); }
   catch (e) { return false; }
@@ -2455,19 +2525,20 @@ document.addEventListener('click', async (e) => {
       state.profileLog = [...(state.profileLog || []), { field: f, from, to: PROFILE[f], at: new Date().toISOString(), date: todayIso(), by: 'me', reason: 'возврат к исходному' }];
       save(); toast('Возвращено исходное значение'); render(); break;
     }
+    case 'show-plan': shown = { id: b.dataset.id, current: currentPlan()?.id }; render(); break;
     case 'plan-png': {
-      const blob = await planImageBlob(currentPlan());
+      const blob = await planImageBlob(shownPlan());
       download(planFileName('png'), blob); toast('Картинка сохранена'); break;
     }
     case 'plan-pdf': {
       const prevTitle = document.title; document.title = planFileName('').replace(/\.$/, '');
       window.print(); document.title = prevTitle; break;
     }
-    case 'plan-text': toast(await copyText(planAsText(currentPlan())) ? 'План скопирован текстом' : 'Не удалось скопировать'); break;
+    case 'plan-text': toast(await copyText(planAsText(shownPlan())) ? 'План скопирован текстом' : 'Не удалось скопировать'); break;
     case 'plan-share': {
-      const blob = await planImageBlob(currentPlan());
+      const blob = await planImageBlob(shownPlan());
       const file = new File([blob], planFileName('png'), { type: 'image/png' });
-      try { await navigator.share({ files: [file], title: currentPlan().title, text: planAsText(currentPlan()) }); } catch (err) {}
+      try { await navigator.share({ files: [file], title: shownPlan().title, text: planAsText(shownPlan()) }); } catch (err) {}
       break;
     }
     case 'export-json': download(`workout-backup-${todayIso()}.json`, JSON.stringify(state, null, 2), 'application/json'); break;
