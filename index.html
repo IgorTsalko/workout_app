@@ -2012,7 +2012,7 @@ function planIssues(plan, entry = null) {
   work.filter(f => !f.ss).forEach(f => { if (odd(f.ex.rest_sec)) issues.push(`«${f.ex.name}» (№${f.tag}): отдых ${f.ex.rest_sec} сек — не целые и не половинные минуты.`); });
   planList(plan).forEach((ex, i) => { if (odd(ex.rest_after_sec)) issues.push(`№${i + 1}: отдых после упражнения ${ex.rest_after_sec} сек — не целые и не половинные минуты.`); });
   planList(plan).filter(isSuperset).forEach(ss => { if (odd(ss.rest_sec)) issues.push(`Суперсет «${ss.name || ''}»: отдых ${ss.rest_sec} сек между кругами — не целые и не половинные минуты.`); });
-  // Плато: то же назначение в четвёртый раз не даст роста — нужна новая схема (раздел «Правила прогрессии» в промпте).
+  // Плато: то же назначение (тот же вес, те же повторы, столько же подходов) в четвёртый раз не даст роста — нужна новая схема (раздел «Правила прогрессии» в промпте).
   const maxReps = (r) => Math.max(0, ...(String(r ?? '').match(/\d+/g) || []).map(Number));
   work.forEach(f => {
     const pr = exerciseProgress(f.ex.name, entry ? [entry] : []);
@@ -2021,13 +2021,14 @@ function planIssues(plan, entry = null) {
     if (pr.byReps) {
       if (ws.some(x => x.weight)) return;
       const planned = Math.max(...ws.map(x => maxReps(x.reps)));
-      if (planned && planned <= pr.best && ws.length === pr.last.sets) issues.push(`«${f.ex.name}» (№${f.tag}): ${pr.status}, а план не выше рекорда (${pr.fmtScore(pr.best)}) — нужна новая схема.`);
+      if (planned && planned === pr.last.reps && ws.length === pr.last.sets) issues.push(`«${f.ex.name}» (№${f.tag}): ${pr.status}, а план повторяет ${ws.length} × ${planned} — нужна новая схема.`);
       return;
     }
     const w = Math.max(...ws.map(x => num(x.weight) ?? -1));
     if (w < 0) return;   // вес подобрать
     const r = Math.max(...ws.map(x => maxReps(x.reps)));
     const top = pr.last.top;
+    // С весом: тот же вес и не больше повторов — роста не будет. Без веса считаем только точный повтор: темп или пауза цифрами не видны.
     if (w === (top.weight || 0) && r <= (top.reps || 0) && ws.length === pr.last.sets)
       issues.push(`«${f.ex.name}» (№${f.tag}): ${pr.status}, а план повторяет ${+w} кг × ${r} — нужна новая схема.`);
   });
