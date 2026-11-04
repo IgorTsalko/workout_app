@@ -1357,7 +1357,7 @@ function exerciseProgress(name, extra = []) {
     const top = done.reduce((a, b) => ((b.weight || 0) > (a.weight || 0) || ((b.weight || 0) === (a.weight || 0) && (b.reps || 0) > (a.reps || 0))) ? b : a);
     const e1 = isSec ? 0 : Math.max(...done.map(x => (x.weight || 0) * (1 + (x.reps || 0) / 30)));
     // Без веса показатель — повторы лучшего подхода; с весом — оценка 1ПМ (повторы — только на случай равенства).
-    return { date: h.date, rpe: ex.rpe || null, line: setsLine({ ...ex, sets: done }), top, sets: done.length,
+    return { date: h.date, rpe: ex.rpe || null, line: setsLine({ ...ex, sets: done }), top, sets: done.length, ss: !!ex.superset,
       e1, reps: top.reps || 0, score: e1 > 0 ? 1000 + e1 : top.reps || 0 };
   });
   const byReps = pts[pts.length - 1].e1 === 0;   // последнее выполнение без веса — показатель в повторах
@@ -1375,8 +1375,10 @@ function exerciseProgress(name, extra = []) {
     : runs >= PLATEAU_MIN ? `плато ${runs} ${plural(runs, 'выполнение', 'выполнения', 'выполнений')}`
     : rec === pts.length - 1 ? 'растёт' : 'держится';
   const fmtScore = (v) => v >= 1000 ? `${+(v - 1000).toFixed(1)} кг` : `${Math.round(v)} ${isSec ? 'сек' : 'повт.'}`;
+  // Был ли подход без веса: тогда вес в записи — добавочный (брусья, подтягивания), и оценку 1ПМ по нему не сравниваем.
+  const bodyweight = list.some(x => x.done.some(s => !s.weight));
   return {
-    name, count: pts.length, window: pts.slice(-PROGRESS_WINDOW), last, best, byReps,
+    name, count: pts.length, window: pts.slice(-PROGRESS_WINDOW), pts, last, best, byReps, bodyweight,
     plateau: runs >= PLATEAU_MIN, runs, regress, fail, status,
     metric: byReps ? (isSec ? 'лучший подход, сек' : 'лучший подход, повторы') : 'оценка 1ПМ',
     fmtScore
@@ -1609,6 +1611,8 @@ function buildPrompt(count) {
   L.push(`  2. Поменяй схему: другой диапазон повторов, добивающий подход с меньшим весом, +1 подход (если группа ниже ориентира), медленное опускание.`);
   L.push(`  3. ${PROGRESS_WINDOW} выполнений без роста — замени на вариант того же движения (гантели → блок, другой хват, другой угол скамьи) и проверь его по «Не предлагать» и «Оборудованию».`);
   L.push(`  4. Плато или регресс у трети упражнений и больше, а последние подходы в отказ — предложи разгрузочную неделю: те же веса, подходов на 40% меньше, RPE около 80%.`);
+  L.push(`- **Реалистичность по RPE.** Если прошлый раз упражнение шло на RPE 95% и выше, новый подход не должен требовать заметно больше: прибавка — +1 повтор в одном-двух подходах или следующий вес с меньшими повторами так, чтобы оценка максимума (вес × (1 + повторы / 30)) выросла не больше чем на 2–3%. Расширенный диапазон (15–20) и большой шаг веса — только когда прошлый раз было RPE 92% и ниже. Приложение отметит подход, который по оценке тяжелее прошлого больше чем на 3%.`);
+  L.push(`- **Суперсет — отдельный формат.** В суперсете то же упражнение идёт тяжелее, чем отдельно. Цифры для части суперсета бери из прошлых выполнений в суперсете (в «Прогрессе по упражнениям» они помечены [суперсет]), для отдельного упражнения — из отдельных. Если в суперсете упражнение не растёт, сначала прибавь отдых между кругами (+30 сек), а не повторы или вес.`);
   L.push(`- **Слишком большой шаг веса.** Если следующий вес больше текущего на 10% и больше (гантели 11 → 13.5 кг — это +23%), не прыгай сразу: доведи повторы до верхней границы расширенного диапазона (до 20), потом ставь новый вес в первый подход, а остальные оставь на старом; или возьми вариант на блоке, где шаг меньше.`);
   L.push(`- **Мои ощущения против цифр.** «Было легко», а повторы не выросли — опирайся на цифры. Цифры выросли, а я пишу о боли — безопасность важнее прогрессии.`);
   L.push('');
@@ -1618,7 +1622,7 @@ function buildPrompt(count) {
   L.push(`2. Каждая мышечная группа в пределах ориентира, или названо, чем жертвуешь и почему; темы обсуждения не вытеснили остальные группы — перечитай план целиком, сверху вниз, по таблице баланса.`);
   L.push(`3. Ни одно упражнение в плато или регрессе не повторяет прошлое назначение (вес, повторы, подходы) без изменений.`);
   L.push(`4. У каждого упражнения вес и повторы совпадают с решением из таблицы прогресса; такой вес есть в зале («Шаги веса»).`);
-  L.push(`5. Целевое RPE реальное: после отказа нет «тех же повторов на 92%».`);
+  L.push(`5. Целевое RPE и цифры реальные: после отказа нет «тех же повторов на 92%»; после RPE 95%+ подход не тяжелее прошлого больше чем на +1 повтор; часть суперсета сверена с прошлыми выполнениями в суперсете.`);
   L.push(`6. Суперсетов не больше лимита из «Обо мне», нет пар, после которых я писал, что дыхание не восстанавливается; отдых — целые или половинные минуты и не меньше правила из «Отдых».`);
   L.push(`7. Нет дублей (в том числе в разминке, заминке и суперсетах), ничего из «Не предлагать», новых упражнений не больше двух, каждое «новое» проверено по истории и «Прогрессу по упражнениям».`);
   L.push(`8. Соблюдено каждое правило из «Журнала ошибок тренера» — пройди их по списку.`);
@@ -1719,7 +1723,7 @@ function buildPrompt(count) {
       L.push(`## Прогресс по упражнениям (считает приложение)`);
       L.push(`По каждому упражнению — последние ${PROGRESS_WINDOW} выполнений (рабочие подходы, RPE последнего подхода), рекорд и статус. Показатель — оценка разового максимума по лучшему рабочему подходу (вес × (1 + повторы / 30)), без веса — повторы (секунды) лучшего подхода; подход с весом всегда выше подхода без веса. Это индикатор тренда, в план его не переноси. Плато — ${PLATEAU_MIN}+ выполнения подряд без нового рекорда. Сначала упражнения из последних тренировок.`);
       for (const pr of progress) {
-        const runs = pr.window.map(x => `${x.date.slice(5)} ${x.line}${x.rpe ? ` RPE ${fmtRpe(x.rpe)}` : ''}`).join(' | ');
+        const runs = pr.window.map(x => `${x.date.slice(5)}${x.ss ? ' [суперсет]' : ''} ${x.line}${x.rpe ? ` RPE ${fmtRpe(x.rpe)}` : ''}`).join(' | ');
         const extra = [`${pr.metric}: рекорд ${pr.fmtScore(pr.best)}, последнее ${pr.fmtScore(pr.last.score)}`];
         if (pr.fail >= 2) extra.push(`${pr.fail} раза подряд в отказ`);
         L.push(`- **${pr.name}** — ${pr.status}; ${extra.join('; ')}; всего выполнений: ${pr.count}`);
@@ -2018,19 +2022,32 @@ function planIssues(plan, entry = null) {
     const pr = exerciseProgress(f.ex.name, entry ? [entry] : []);
     if (!pr || !pr.plateau) return;
     const ws = workSets(f.ex);
+    // Сравниваем с прошлым выполнением в том же формате: в суперсете упражнение идёт тяжелее, чем отдельно.
+    const prev = [...pr.pts].reverse().find(x => x.ss === !!f.ss) || pr.last;
     if (pr.byReps) {
       if (ws.some(x => x.weight)) return;
       const planned = Math.max(...ws.map(x => maxReps(x.reps)));
-      if (planned && planned === pr.last.reps && ws.length === pr.last.sets) issues.push(`«${f.ex.name}» (№${f.tag}): ${pr.status}, а план повторяет ${ws.length} × ${planned} — нужна новая схема.`);
+      if (planned && planned === prev.reps && ws.length === prev.sets) issues.push(`«${f.ex.name}» (№${f.tag}): ${pr.status}, а план повторяет ${ws.length} × ${planned} — нужна новая схема.`);
       return;
     }
     const w = Math.max(...ws.map(x => num(x.weight) ?? -1));
     if (w < 0) return;   // вес подобрать
     const r = Math.max(...ws.map(x => maxReps(x.reps)));
-    const top = pr.last.top;
+    const top = prev.top;
     // С весом: тот же вес и не больше повторов — роста не будет. Без веса считаем только точный повтор: темп или пауза цифрами не видны.
-    if (w === (top.weight || 0) && r <= (top.reps || 0) && ws.length === pr.last.sets)
+    if (w === (top.weight || 0) && r <= (top.reps || 0) && ws.length === prev.sets)
       issues.push(`«${f.ex.name}» (№${f.tag}): ${pr.status}, а план повторяет ${+w} кг × ${r} — нужна новая схема.`);
+  });
+  // Нереально тяжело: прошлый раз (в том же формате — в суперсете или отдельно) шёл на RPE 95%+,
+  // а подход плана по оценке 1ПМ тяжелее его больше чем на 3% (это больше +1 повтора). Повторы диапазона — по нижней границе.
+  const minReps = (r) => { const m = String(r ?? '').match(/\d+/g); return m ? Math.min(...m.map(Number)) : 0; };
+  work.forEach(f => {
+    const pr = exerciseProgress(f.ex.name, entry ? [entry] : []);
+    if (!pr || pr.bodyweight || f.ex.unit === 'sec') return;
+    const same = [...pr.pts].reverse().find(x => x.ss === !!f.ss) || pr.last;
+    if ((same.rpe || 0) < 95 || !same.e1) return;
+    const hard = workSets(f.ex).find(x => num(x.weight) && minReps(x.reps) && num(x.weight) * (1 + minReps(x.reps) / 30) > same.e1 * 1.03);
+    if (hard) issues.push(`«${f.ex.name}» (№${f.tag}): подход ${+num(hard.weight)} кг × ${minReps(hard.reps)} тяжелее, чем ${same.date.slice(5)}${same.ss ? ' в суперсете' : ''} (${same.line}, RPE ${same.rpe}%), — по RPE это нереально.`);
   });
   const ssCount = planList(plan).filter(isSuperset).length;
   if (ssCount > P.maxSupersets) issues.push(`Суперсетов ${ssCount}, а лимит в «Обо мне» — ${P.maxSupersets}.`);
