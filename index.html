@@ -150,6 +150,14 @@ label.f > input, label.f > textarea, label.f > select { margin-top: 4px; }
 .plan-switch .st.next { color: var(--accent); font-weight: 600; }
 .plan-switch button.on { background: var(--accent-soft); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .plan-switch button.on .wd, .plan-switch button.on .dt { color: var(--accent); }
+.rpe-box { margin-top: 6px; padding: 5px 10px 6px; border-radius: 0 8px 8px 0; font-size: 14px; }
+.rpe-box b { font-weight: 700; }
+.rpe-box.easy { background: var(--good-soft); border-left: 3px solid var(--good); }
+.rpe-box.easy b { color: var(--good); }
+.rpe-box.hard { background: var(--bad-soft); border-left: 3px solid var(--bad); }
+.rpe-box.hard b { color: var(--bad); }
+.rpe-box.mid { background: var(--accent-soft); border-left: 3px solid var(--accent); }
+.rpe-box.mid b { color: var(--accent); }
 .warm-box { margin-top: 6px; padding: 6px 10px 7px; border-radius: 0 8px 8px 0; background: var(--warn-soft); border-left: 3px solid var(--warn); }
 .warm-h { font-size: 12px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase; color: var(--warn); display: flex; flex-wrap: wrap; gap: 2px 6px; align-items: center; }
 .warm-h .rest { text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--text-2); }
@@ -644,6 +652,21 @@ const fmtW = (w) => (w === null || w === undefined || w === '') ? 'вес под
 // RPE храним в процентах от максимального усилия (100% — отказ).
 const RPE_STEPS = [50, 60, 70, 80, 85, 90, 95, 100];
 const fmtRpe = (v) => v ? `${v}%` : '';
+// Целевое RPE в плане — заметной плашкой: зелёная — остановиться с запасом, синяя — 1 повтор в запасе, красная — до отказа.
+// Повторы в запасе — по моей шкале: 100% — отказ, 90% — ~1 в запасе, 80% — ~2–3.
+function rpeHtml(v, prev = null) {
+  const r = Number(v);
+  if (!r) return '';
+  const [cls, txt] = r >= 97 ? ['hard', 'до отказа в последнем подходе']
+    : r >= 93 ? ['hard', '0–1 повтор в запасе, почти до отказа']
+    : r >= 88 ? ['mid', 'остановись, когда остаётся 1 повтор']
+    : r >= 83 ? ['easy', 'не до отказа: остановись, когда остаётся 2 повтора']
+    : ['easy', 'с запасом: остановись, когда остаётся 2–3 повтора'];
+  // Прошлый раз заметно тяжелее цели — напомнить, что сегодня надо остановиться раньше.
+  const p = Number(prev);
+  const was = p && p >= r + 3 ? `. Прошлый раз было ${fmtRpe(p)}: сегодня не дожимай` : '';
+  return `<div class="rpe-box ${cls}"><b>Цель RPE ${fmtRpe(r)}</b> · ${txt}${was}</div>`;
+}
 const normRpe = (v) => { const n = num(v); if (n === null) return null; return n <= 10 ? Math.round(n * 10) : Math.round(n); };
 const warmW = (w) => (w === null || w === undefined || w === '') ? 'лёгкий вес' : Number(w) === 0 ? 'б/в' : `${+w} кг`;
 const fmtRest = (sec) => sec >= 60 ? `${Math.round(sec / 60 * 10) / 10} мин` : `${sec} сек`;
@@ -979,7 +1002,7 @@ function viewToday() {
               <div class="row"><span class="ex-name grow">${esc(p.name)}</span>${changeBadge(p.change)}</div>
               ${schemeHtml({ ...p, sets: ex.sets }, false, !past && warmSkipped(lastTime(p.name, plan)?.ex))}
               ${past ? doneHtml(p.name, entry) : lastHtml(p.name, plan)}
-              ${p.rpe ? `<div class="small muted">Целевое RPE ${fmtRpe(p.rpe)}</div>` : ''}
+              ${rpeHtml(p.rpe, past ? null : lastTime(p.name, plan)?.ex?.rpe)}
               ${p.notes ? `<div class="small" style="margin-top:4px">${esc(p.notes)}</div>` : ''}
             </div>
           </div>`).join('')}
@@ -995,7 +1018,7 @@ function viewToday() {
         <div class="row"><span class="ex-name grow">${esc(ex.name)}</span>${changeBadge(ex.change)}${time}</div>
         ${schemeHtml(ex, true, !past && warmSkipped(lastTime(ex.name, plan)?.ex))}
         ${past ? doneHtml(ex.name, entry) : lastHtml(ex.name, plan)}
-        ${ex.rpe ? `<div class="small muted">Целевое RPE ${fmtRpe(ex.rpe)}</div>` : ''}
+        ${rpeHtml(ex.rpe, past ? null : lastTime(ex.name, plan)?.ex?.rpe)}
         ${ex.notes ? `<div class="small" style="margin-top:6px">${esc(ex.notes)}</div>` : ''}
         ${restHtml}
       </div>
