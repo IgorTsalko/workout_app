@@ -657,9 +657,10 @@ const RPE_STEPS = [50, 60, 70, 80, 85, 90, 95, 100];
 const fmtRpe = (v) => v ? `${v}%` : '';
 // Целевое RPE в плане — заметной плашкой: зелёная — остановиться с запасом, синяя — 2 повтора в запасе, красная — 0–1 в запасе.
 // Повторы в запасе — по согласованной шкале (10.11): 100% — отказ, 95% — 1 в запасе, 90% — 2, 85% — 3, 80% — 4 и больше.
-function rpeHtml(v, prev = null) {
+// rpeInfo — общая часть для экрана и картинки PNG: класс цвета, заголовок и подсказка.
+function rpeInfo(v, prev = null) {
   const r = Number(v);
-  if (!r) return '';
+  if (!r) return null;
   const [cls, txt] = r >= 97 ? ['hard', 'до отказа в последнем подходе: 0 повторов в запасе']
     : r >= 93 ? ['hard', '1 повтор в запасе: ещё один вышел бы, второй — нет']
     : r >= 88 ? ['mid', 'остановись, когда остаётся 2 повтора']
@@ -668,7 +669,11 @@ function rpeHtml(v, prev = null) {
   // Прошлый раз заметно тяжелее цели — напомнить, что сегодня надо остановиться раньше.
   const p = Number(prev);
   const was = p && p >= r + 3 ? `. Прошлый раз было ${fmtRpe(p)}: сегодня не дожимай` : '';
-  return `<div class="rpe-box ${cls}"><b>Цель RPE ${fmtRpe(r)}</b> · ${txt}${was}</div>`;
+  return { cls, title: `Цель RPE ${fmtRpe(r)}`, text: txt + was };
+}
+function rpeHtml(v, prev = null) {
+  const i = rpeInfo(v, prev);
+  return i ? `<div class="rpe-box ${i.cls}"><b>${i.title}</b> · ${i.text}</div>` : '';
 }
 const normRpe = (v) => { const n = num(v); if (n === null) return null; return n <= 10 ? Math.round(n * 10) : Math.round(n); };
 const warmW = (w) => (w === null || w === undefined || w === '') ? 'лёгкий вес' : Number(w) === 0 ? 'б/в' : `${+w} кг`;
@@ -857,14 +862,17 @@ function schemeHtml(ex, withRest = true, skipped = false) {
     <span class="unit">·</span> ${esc(fmtW(main.weight))}</div>
     ${rest.map(g => `<div class="small"><b>+ ${g.n} × ${esc(g.reps)}</b> · ${esc(fmtW(g.weight))}</div>`).join('')}</div>`;
 }
+// Цвет пометки об изменении: good / warn / accent, «без изменений» — нейтральная (''). Общая для экрана и PNG.
+function changeCls(change) {
+  const c = String(change).toLowerCase();
+  if (/^\+|нов|добав|увелич/.test(c)) return 'good';
+  if (/^[−-]|сниж|меньш|умень|облегч|разгруз/.test(c)) return 'warn';
+  if (/без изм/.test(c)) return '';
+  return 'accent';
+}
 function changeBadge(change) {
   if (!change) return '';
-  const c = String(change).toLowerCase();
-  let cls = 'accent';
-  if (/^\+|нов|добав|увелич/.test(c)) cls = 'good';
-  else if (/^[−-]|сниж|меньш|умень|облегч|разгруз/.test(c)) cls = 'warn';
-  else if (/без изм/.test(c)) cls = '';
-  return `<span class="badge ${cls}">${esc(change)}</span>`;
+  return `<span class="badge ${changeCls(change)}">${esc(change)}</span>`;
 }
 
 // «Прошлый раз»: последняя выполненная тренировка (не по этому плану), где было упражнение с тем же названием.
@@ -898,11 +906,18 @@ function lastHtml(name, plan) {
     ${last.ex.notes ? `<div class="last-note">${esc(last.ex.notes)}</div>` : ''}</div>`;
 }
 // «✓ Сделано»: что получилось в этом упражнении по записи о выполненном плане (только у прошлых планов).
-function doneHtml(name, entry) {
-  if (!entry || entry.status !== 'done') return '';
+// doneInfo — общая часть для экрана и PNG: упражнение из записи и строка подходов (null — запись не «выполнена»).
+function doneInfo(name, entry) {
+  if (!entry || entry.status !== 'done') return null;
   const ex = (entry.exercises || []).find(e => sameName(e.name, name));
+  if (!ex) return { ex: null, line: '' };
+  return { ex, line: (ex.sets || []).some(isWork) || (ex.sets || []).some(x => x.done === false) ? lastLine({ ex }) : '' };
+}
+function doneHtml(name, entry) {
+  const info = doneInfo(name, entry);
+  if (!info) return '';
+  const { ex, line } = info;
   if (!ex) return `<div class="last done"><span class="last-h">✓ Сделано:</span> не записано</div>`;
-  const line = (ex.sets || []).some(isWork) || (ex.sets || []).some(x => x.done === false) ? lastLine({ ex }) : '';
   return `<div class="last done"><span class="last-h">✓ Сделано:</span> ${esc(line || '—')}${warmSkipped(ex) ? ' · <span class="last-skip">разминочный пропущен</span>' : ''}
     ${ex.notes ? `<div class="last-note">${esc(ex.notes)}</div>` : ''}</div>`;
 }
@@ -2464,11 +2479,17 @@ function buildSeed() {
    ===================================================================== */
 const planFileName = (ext) => { const p = shownPlan(); return `workout-${p && p.date ? p.date : todayIso()}.${ext}`; };
 // Рисуем план на canvas вручную — без внешних библиотек, работает офлайн.
+// Картинка повторяет экран плана: для прошлого плана — итог записи, «Цель была» и «✓ Сделано» вместо «Прошлый раз».
 function planImageBlob(plan) {
   const timeline = planItems(plan);
+  const past = plan && plan !== currentPlan();
+  const entry = past ? planEntry(plan) : null;
+  const target = profile().sessionMinutes;
+  const overLimit = fmtMin(timeline.total) > target + TIME_SLACK_MIN;
+  const used = state.history.some(h => h.planId === plan.id);
   const W = 1080, PAD = 56, SCALE = 1;
   const C = { bg: '#f4f4f2', card: '#ffffff', border: '#dddcd7', text: '#0b0b0b', text2: '#52514e', muted: '#8a8984',
-    accent: '#2a78d6', accentSoft: '#e3eefb', good: '#1f7a3a', goodSoft: '#e2f3e6', warn: '#9a6400', warnSoft: '#fbf0d9', bad: '#c03a39' };
+    accent: '#2a78d6', accentSoft: '#e3eefb', good: '#1f7a3a', goodSoft: '#e2f3e6', warn: '#9a6400', warnSoft: '#fbf0d9', bad: '#c03a39', badSoft: '#fbe5e5', soft: '#efefec' };
   const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
@@ -2492,12 +2513,40 @@ function planImageBlob(plan) {
     if (fill) { ctx.fillStyle = fill; ctx.fill(); }
     if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 2; ctx.stroke(); }
   };
-  const badgeColors = (change) => {
-    const c = String(change).toLowerCase();
-    if (/^\+|нов|добав|увелич/.test(c)) return [C.goodSoft, C.good];
-    if (/^[−-]|сниж|меньш|умень|облегч|разгруз/.test(c)) return [C.warnSoft, C.warn];
-    return [C.accentSoft, C.accent];
+  const badgeColors = (change) => ({ good: [C.goodSoft, C.good], warn: [C.warnSoft, C.warn], accent: [C.accentSoft, C.accent] })[changeCls(change)]
+    || [C.soft, C.text2];
+  // Строка из кусков разного стиля ({ t, size, weight, color }) с переносом по словам.
+  // Переносим только по обычным пробелам: неразрывный пробел в «50 кг» строку не рвёт, как на экране.
+  const wrapRuns = (runs, maxW) => {
+    const lines = [[]];
+    let w = 0;
+    for (const r of runs) {
+      ctx.font = font(r.size, r.weight);
+      for (const piece of String(r.t).split(/( +)/)) {
+        if (!piece) continue;
+        let L = lines[lines.length - 1];
+        const pw = ctx.measureText(piece).width;
+        if (/^ +$/.test(piece)) { if (L.length) { L.push({ ...r, t: ' ', w: ctx.measureText(' ').width }); w += L[L.length - 1].w; } continue; }
+        if (w + pw > maxW && L.length) {
+          while (L.length && L[L.length - 1].t === ' ') L.pop();
+          lines.push(L = []); w = 0;
+        }
+        L.push({ ...r, t: piece, w: pw }); w += pw;
+      }
+    }
+    return lines;
   };
+  // Рисует (draw=true) строки из wrapRuns с верхнего края y; возвращает высоту.
+  const drawRuns = (lines, x, y, lh, draw) => {
+    let cy = y;
+    for (const L of lines) {
+      const size = Math.max(0, ...L.map(r => r.size));
+      if (draw) { let cx = x; ctx.textBaseline = 'top'; for (const r of L) { ctx.font = font(r.size, r.weight); ctx.fillStyle = r.color; ctx.fillText(r.t, cx, cy + (size - r.size) * 0.8); cx += r.w; } }
+      cy += size * lh;
+    }
+    return cy - y;
+  };
+  const RPE_COLORS = { easy: ['goodSoft', 'good'], mid: ['accentSoft', 'accent'], hard: ['badSoft', 'bad'] };
 
   // Один проход раскладки: draw=false только считает высоту.
   const layout = (draw) => {
@@ -2511,9 +2560,15 @@ function planImageBlob(plan) {
     // Заголовок
     text(plan.title || 'Тренировка', 54, 700, C.text, PAD, inner, 1.2);
     y += 8;
-    const meta = [plan.date ? fmtDate(plan.date) : '', `~${fmtMin(timeline.total)} мин`,
-      plan.rest_between_exercises_sec ? `${fmtRest(plan.rest_between_exercises_sec)} между упражнениями` : ''].filter(Boolean).join('  ·  ');
-    if (meta) text(meta, 28, 500, C.accent, PAD, inner);
+    // Строка как бейджи на экране: дата, время (оранжевым, если дольше ориентира), отдых, «уже записана».
+    // Каждый бейдж не рвётся переносом (неразрывные пробелы), строка переносится только между бейджами.
+    const metaRun = (t, color = C.accent, weight = 500) => ({ t: t.replace(/ /g, '\u00a0'), size: 28, weight, color });
+    const meta = [plan.date ? [metaRun(`📅 ${fmtDate(plan.date)}`)] : null,
+      [overLimit ? metaRun(`⏱ ~${fmtMin(timeline.total)} мин — дольше ориентира ~${target}`, C.warn, 700) : metaRun(`⏱ ~${fmtMin(timeline.total)} мин`)],
+      plan.rest_between_exercises_sec ? [metaRun(`↻ ${fmtRest(plan.rest_between_exercises_sec)} между упражнениями`)] : null,
+      used ? [metaRun('✓ уже записана', C.good, 700)] : null].filter(Boolean);
+    const metaLines = wrapRuns(meta.flatMap((m, i) => i ? [{ t: '  ·  ', size: 28, weight: 500, color: C.muted }, ...m] : m), inner);
+    y += drawRuns(metaLines, PAD, y, 1.35, draw);
     if (plan.focus) { y += 4; text(plan.focus, 26, 400, C.text2, PAD, inner); }
     y += 28;
     // Блоки-подсказки
@@ -2527,8 +2582,17 @@ function planImageBlob(plan) {
       text(body, 27, 400, C.text, PAD + pad + 8, w, 1.4);
       y = y0 + h + 18;
     };
+    // Прошлый план: итог записи в истории, как плашка над планом на экране.
+    if (past) {
+      if (entry) {
+        const good = STATUS[entry.status].cls === 'good';
+        const body = [metaLine(entry), entry.status !== 'done' && entry.reason ? entry.reason : '', entry.notes || ''].filter(Boolean).join('\n')
+          || 'Под каждым упражнением — что сделано.';
+        callout(`${STATUS[entry.status].glyph} ${STATUS[entry.status].label} ${fmtDate(entry.date)}`, body, good ? C.goodSoft : C.warnSoft, good ? C.good : C.warn);
+      } else callout('Прошлый план', 'Записи о тренировке по этому плану нет.', C.warnSoft, C.warn);
+    }
     const brief = planBrief(plan);
-    if (brief) callout('🎯 Цель тренировки', brief.text, C.accentSoft, C.accent);
+    if (brief) callout(past ? '🎯 Цель была' : '🎯 Цель тренировки', brief.text, C.accentSoft, C.accent);
     if (plan.warnings && plan.warnings.length) callout('⚠ Важно', plan.warnings.map(w => `• ${w}`).join('\n'), C.warnSoft, C.warn);
     // «Перо»: рисует (d=true) или только меряет (d=false) блоки, начиная с высоты startY.
     const pen = (d, startY) => {
@@ -2537,6 +2601,20 @@ function planImageBlob(plan) {
         const lines = wrap(str, size, weight, maxW);
         if (d) { ctx.font = font(size, weight); ctx.fillStyle = color; ctx.textBaseline = 'top'; lines.forEach((l, k) => ctx.fillText(l, tx, P.y + k * size * lh)); }
         P.y += lines.length * size * lh;
+      };
+      P.R = (runs, tx, maxW, lh = 1.35) => { P.y += drawRuns(wrapRuns(runs, maxW), tx, P.y, lh, d); };
+      // Плашка целевого RPE — того же цвета и с той же подсказкой, что на экране.
+      P.rpe = (v, prev, tx, maxW) => {
+        const info = rpeInfo(v, prev);
+        if (!info) return;
+        const [soft, line] = RPE_COLORS[info.cls].map(k => C[k]);
+        const pad = 14, ix = tx + pad + 6, iw = maxW - pad * 2 - 6;
+        const lines = wrapRuns([{ t: info.title, size: 26, weight: 700, color: line }, { t: ` · ${info.text}`, size: 26, weight: 400, color: C.text }], iw);
+        P.y += 12;
+        const y0 = P.y, h = pad * 2 + drawRuns(lines, ix, 0, 1.35, false);
+        if (d) { roundRect(tx, y0, maxW, h, 12, soft); ctx.fillStyle = line; ctx.fillRect(tx, y0 + 8, 6, h - 16); }
+        drawRuns(lines, ix, y0 + pad, 1.35, d);
+        P.y = y0 + h;
       };
       P.badge = (change, right) => {
         if (!change) return 0;
@@ -2588,7 +2666,7 @@ function planImageBlob(plan) {
         if (!sec) return;
         P.y += 12;
         if (d) {
-          roundRect(tx, P.y, maxW, 48, 12, '#efefec');
+          roundRect(tx, P.y, maxW, 48, 12, C.soft);
           ctx.textBaseline = 'middle'; ctx.font = font(24, 500); ctx.fillStyle = C.text2; const lbl = '⏸ Отдых ';
           ctx.fillText(lbl, tx + 16, P.y + 25); const lw = ctx.measureText(lbl).width;
           ctx.font = font(24, 700); ctx.fillStyle = C.text; ctx.fillText(fmtRest(sec), tx + 16 + lw, P.y + 25);
@@ -2596,18 +2674,19 @@ function planImageBlob(plan) {
         P.y += 48;
       };
       // Плашка «Прошлый раз» под схемой подходов, как на экране: заголовок, подходы и заметка.
-      P.last = (name, tx, maxW, bg = '#efefec') => {
-        const last = lastTime(name, plan);
-        if (!last) return;
-        const pad = 16, iw = maxW - pad * 2, head = `↩ ПРОШЛЫЙ РАЗ, ${shortDate(last.date).toUpperCase()}`, body = lastLine(last), note = last.ex.notes || '';
+      // Плашка под схемой: «↩ Прошлый раз» у текущего плана, «✓ Сделано» у прошлого.
+      P.box = (head, body, skip, note, bg, tx, maxW) => {
+        const pad = 16, iw = maxW - pad * 2;
+        const bodyLines = wrapRuns([{ t: body, size: 24, weight: 600, color: C.text },
+          ...(skip ? [{ t: ' · разминочный пропущен', size: 24, weight: 700, color: C.bad }] : [])], iw);
         const noteAll = note ? wrap(note, 21, 400, iw) : [], noteLines = noteAll.slice(0, 2), more = noteAll.length > 2;
-        const h = pad * 2 + 19 * 1.35 + 6 + wrap(body, 24, 600, iw).length * 24 * 1.35 + (noteLines.length ? 6 + noteLines.length * 21 * 1.35 : 0);
+        const h = pad * 2 + 19 * 1.35 + 6 + drawRuns(bodyLines, 0, 0, 1.35, false) + (noteLines.length ? 6 + noteLines.length * 21 * 1.35 : 0);
         P.y += 12;
         const y0 = P.y;
         if (d) roundRect(tx, y0, maxW, h, 12, bg);
         P.y += pad;
         P.T(head, 19, 700, C.muted, tx + pad, iw); P.y += 6;
-        P.T(body, 24, 600, C.text, tx + pad, iw);
+        P.y += drawRuns(bodyLines, tx + pad, P.y, 1.35, d);
         if (noteLines.length) {
           P.y += 6;
           // Заметка — не больше двух строк, как на экране.
@@ -2617,11 +2696,21 @@ function planImageBlob(plan) {
         }
         P.y = y0 + h + 4;
       };
-      P.meta = (str, tx) => {
-        if (!str) return;
-        if (d) { ctx.font = font(23, 500); ctx.fillStyle = C.muted; ctx.textBaseline = 'top'; ctx.fillText(str, tx, P.y + 2); }
-        P.y += 34;
+      P.last = (name, tx, maxW, bg = C.soft) => {
+        if (past) {
+          const info = doneInfo(name, entry);
+          if (!info) return;
+          if (!info.ex) return P.box('✓ СДЕЛАНО', 'не записано', false, '', C.goodSoft, tx, maxW);
+          return P.box('✓ СДЕЛАНО', info.line || '—', warmSkipped(info.ex), info.ex.notes || '', C.goodSoft, tx, maxW);
+        }
+        const last = lastTime(name, plan);
+        if (!last) return;
+        P.box(`↩ ПРОШЛЫЙ РАЗ, ${shortDate(last.date).toUpperCase()}`, lastLine(last), warmSkipped(last.ex), last.ex.notes || '', bg, tx, maxW);
       };
+      // Только у текущего плана, как на экране: прошлое RPE для подсказки «сегодня не дожимай»
+      // и пометка, что разминочный подход в прошлый раз пропущен.
+      P.prevRpe = (name) => past ? null : lastTime(name, plan)?.ex?.rpe;
+      P.skipped = (name) => !past && warmSkipped(lastTime(name, plan)?.ex);
       return P;
     };
     // Упражнения
@@ -2641,9 +2730,10 @@ function planImageBlob(plan) {
         if (!isSuperset(ex)) {
           const bw = P.badge(ex.change, right);
           P.T(ex.name, 34, 700, C.text, x, w - bw - 12, 1.25); P.y += 4;
-          P.T(when + (ex.rpe ? `  ·  RPE ${fmtRpe(ex.rpe)}` : ''), 23, 600, C.accent, x, w); P.y += 8;
-          P.scheme(ex, x, w, true, warmSkipped(lastTime(ex.name, plan)?.ex));
+          P.T(when, 23, 600, C.accent, x, w); P.y += 8;
+          P.scheme(ex, x, w, true, P.skipped(ex.name));
           P.last(ex.name, x, w);
+          P.rpe(ex.rpe, P.prevRpe(ex.name), x, w);
           if (ex.notes) { P.y += 8; P.T(ex.notes, 24, 400, C.text2, x, w, 1.4); }
           P.rest(it, x, w);
           return P.y + pad;
@@ -2659,15 +2749,15 @@ function planImageBlob(plan) {
             const Q = pen(dd, sy + 18);
             const pbw = Q.badge(part.change, x + w - 18);
             Q.T(part.name, 29, 700, C.text, px, pw - pbw - 10, 1.25); Q.y += 6;
-            Q.scheme({ ...part, sets: ex.sets }, px, pw, false, warmSkipped(lastTime(part.name, plan)?.ex));
+            Q.scheme({ ...part, sets: ex.sets }, px, pw, false, Q.skipped(part.name));
             Q.last(part.name, px, pw, C.card);
-            Q.meta(part.rpe ? `RPE ${fmtRpe(part.rpe)}` : '', px);
+            Q.rpe(part.rpe, Q.prevRpe(part.name), px, pw);
             if (part.notes) { Q.y += 4; Q.T(part.notes, 23, 400, C.text2, px, pw, 1.4); }
             return Q.y + 18;
           };
           const sy = P.y, end = partBox(false, sy);
           if (d) {
-            roundRect(x, sy, w, end - sy, 14, '#efefec');
+            roundRect(x, sy, w, end - sy, 14, C.soft);
             ctx.fillStyle = C.accent; ctx.fillRect(x, sy + 10, 6, end - sy - 20);
             roundRect(x + 18, sy + 18, 34, 34, 8, C.accent);
             ctx.font = font(22, 700); ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -2691,7 +2781,7 @@ function planImageBlob(plan) {
       y = y0 + h + 16;
     });
     y += 6;
-    if (plan.notes) callout('Заметки', plan.notes, '#efefec', C.muted);
+    if (plan.notes) callout('Заметки', plan.notes, C.soft, C.muted);
     text(`Дневник тренировок · ${todayIso()}`, 20, 400, C.muted, PAD, inner);
     return y + PAD;
   };
