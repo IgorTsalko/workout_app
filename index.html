@@ -476,7 +476,11 @@ async function ghPut(path, body, sha, message) {
     body: JSON.stringify({ message, content: utf8ToB64(body), ...(s ? { sha: s } : {}) }) });
   let r = await put(sha);
   // sha устарел (файл меняли с другого устройства или вручную) — берём актуальный и пишем поверх; прошлая версия остаётся в истории git.
-  if (r.status === 409 || r.status === 422) r = await put(await ghRemoteSha(path));
+  // 409 бывает и когда коммиты идут подряд (несколько файлов задания тренера): ветка ещё не обновилась — ждём и повторяем.
+  for (let i = 0; i < 3 && (r.status === 409 || r.status === 422); i++) {
+    if (i) await new Promise(res => setTimeout(res, 1500 * i));
+    r = await put(await ghRemoteSha(path));
+  }
   if (!r.ok) throw new Error(r.status === 404 ? 'Репозиторий не найден (404): проверьте имя и доступ токена' : `GitHub ответил ${r.status}`);
   return (await r.json()).content.sha;
 }
@@ -509,6 +513,7 @@ async function ghPush(force = false) {
       gh.files[p] = { sha, hash: hashStr(files[p]) };
       Object.assign(gh, { lastOk: new Date().toISOString(), lastError: '' });
       saveGh();
+      await new Promise(res => setTimeout(res, 700)); // коммиты подряд в одну ветку GitHub иногда отклоняет (409)
     }
     if (gh.dirty) ghSchedule();
     return true;
@@ -2654,7 +2659,7 @@ function viewSettings() {
     <p class="small" style="margin-top:0">После каждого сохранения (тренировка, ответ тренера, правка, откат) данные сами коммитятся в файл <code>${esc(gh.path)}</code> вашего репозитория. Каждая версия остаётся в истории git.</p>
     <p class="small">${ghStatusHtml()}</p>
     ${ghOn() ? `<p class="small muted">Репозиторий: <a href="https://github.com/${esc(gh.repo)}/commits/HEAD/${esc(gh.path)}" target="_blank" rel="noopener">${esc(gh.repo)}</a></p>
-    <p class="small">При открытии приложение забирает из репозитория изменения с другого устройства и ответ тренера из <code>${GH_INBOX_PATH}</code>, а рядом кладёт промпт тренера <code>${GH_PROMPT_PATH}</code> для отдельного проекта Claude.${state.coachInbox ? ` Последний ответ тренера из GitHub загружен ${fmtStamp(state.coachInbox.at)}.` : ''}${gh.inboxFailed ? ` <span style="color:var(--bad)">⚠ Последний <code>${GH_INBOX_PATH}</code> не загружен: в нём ошибка. Попросите тренера записать его заново.</span>` : ''}</p>
+    <p class="small">При открытии приложение забирает из репозитория изменения с другого устройства и ответ тренера из <code>${GH_INBOX_PATH}</code>, а рядом кладёт задание тренера для отдельного проекта Claude: <code>${GH_PROMPT_PATH}</code> и файлы стадий в папке <code>coach/</code>.${state.coachInbox ? ` Последний ответ тренера из GitHub загружен ${fmtStamp(state.coachInbox.at)}.` : ''}${gh.inboxFailed ? ` <span style="color:var(--bad)">⚠ Последний <code>${GH_INBOX_PATH}</code> не загружен: в нём ошибка. Попросите тренера записать его заново.</span>` : ''}</p>
     <div class="row">
       <button class="btn primary" data-act="gh-push">Отправить сейчас</button>
       <button class="btn" data-act="gh-sync">Проверить GitHub</button>
