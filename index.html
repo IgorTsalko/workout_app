@@ -2659,7 +2659,7 @@ function viewSettings() {
     <p class="small" style="margin-top:0">После каждого сохранения (тренировка, ответ тренера, правка, откат) данные сами коммитятся в файл <code>${esc(gh.path)}</code> вашего репозитория. Каждая версия остаётся в истории git.</p>
     <p class="small">${ghStatusHtml()}</p>
     ${ghOn() ? `<p class="small muted">Репозиторий: <a href="https://github.com/${esc(gh.repo)}/commits/HEAD/${esc(gh.path)}" target="_blank" rel="noopener">${esc(gh.repo)}</a></p>
-    <p class="small">При открытии приложение забирает из репозитория изменения с другого устройства и ответ тренера из <code>${GH_INBOX_PATH}</code>, а рядом кладёт промпт тренера <code>${GH_PROMPT_PATH}</code> для отдельного проекта Claude.${state.coachInbox ? ` Последний ответ тренера из GitHub загружен ${fmtStamp(state.coachInbox.at)}.` : ''}${gh.inboxFailed ? ` <span style="color:var(--bad)">⚠ Последний <code>${GH_INBOX_PATH}</code> не загружен: в нём ошибка. Попросите тренера записать его заново.</span>` : ''}</p>
+    <p class="small">При открытии приложение забирает из репозитория изменения с другого устройства и ответ тренера из <code>${GH_INBOX_PATH}</code>, а рядом кладёт задание тренера для отдельного проекта Claude: <code>${GH_PROMPT_PATH}</code> и файлы стадий в папке <code>coach/</code>.${state.coachInbox ? ` Последний ответ тренера из GitHub загружен ${fmtStamp(state.coachInbox.at)}.` : ''}${gh.inboxFailed ? ` <span style="color:var(--bad)">⚠ Последний <code>${GH_INBOX_PATH}</code> не загружен: в нём ошибка. Попросите тренера записать его заново.</span>` : ''}</p>
     <div class="row">
       <button class="btn primary" data-act="gh-push">Отправить сейчас</button>
       <button class="btn" data-act="gh-sync">Проверить GitHub</button>
