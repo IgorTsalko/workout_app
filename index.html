@@ -989,7 +989,7 @@ function viewToday() {
       <span class="badge ${overLimit ? 'warn' : ''}">⏱ ~${fmtMin(timeline.total)} мин${overLimit ? ` — дольше ориентира ~${target}` : ''}</span>
       ${plan.rest_between_exercises_sec ? `<span class="badge">↻ ${esc(Math.round(plan.rest_between_exercises_sec / 60 * 10) / 10)} мин между упражнениями</span>` : ''}
       ${used ? '<span class="badge good">✓ уже записана</span>' : ''}
-      <button class="btn sm no-print" data-act="plan-png" style="margin-left:auto" title="Скачать план картинкой PNG">🖼 Взять с собой</button>
+      <button class="btn sm no-print" data-act="plan-png" style="margin-left:auto" title="Скачать план картинкой PNG">Скачать план (PNG)</button>
     </div>`;
   if (past) {
     html += entry ? `<div class="callout ${STATUS[entry.status].cls === 'good' ? 'good' : 'warn'}"><h4>${STATUS[entry.status].glyph} ${STATUS[entry.status].label} ${esc(fmtDate(entry.date))}</h4>
